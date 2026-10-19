@@ -4,6 +4,7 @@ node_modules/
 # Production build
 dist/
 dist.zip
+*.zip
 
 # Environment variables & secrets
 .env
