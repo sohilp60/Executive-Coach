@@ -16,6 +16,7 @@ import {
   injectNotionTaskStrategy,
   cleanNotionApiKey,
   extractNotionDatabaseId,
+  callNotionApi,
 } from '../core/storage/notion-client';
 import {
   createNotionTask,
@@ -269,20 +270,18 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             let config = message.config;
-            if (!config?.apiKey || !config?.databaseId) {
-              const stored = (await chrome.storage.local.get('po_notion_config')) as {
-                po_notion_config?: { apiKey?: string; databaseId?: string };
-              };
-              if (stored.po_notion_config) {
-                config = {
-                  apiKey: config?.apiKey || stored.po_notion_config.apiKey || '',
-                  databaseId: config?.databaseId || stored.po_notion_config.databaseId || '',
-                };
-              }
-            }
+            const stored = (await chrome.storage.local.get('po_notion_config')) as {
+              po_notion_config?: { apiKey?: string; databaseId?: string; notionProxyUrl?: string; proxyUrl?: string };
+            };
+            config = {
+              apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
+              databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
+              notionProxyUrl: config?.notionProxyUrl || config?.proxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '',
+            };
 
             const cleanKey = cleanNotionApiKey(config?.apiKey || '');
             const cleanDbId = extractNotionDatabaseId(config?.databaseId || '');
+            const proxyUrl = (config?.notionProxyUrl || '').trim();
 
             if (!cleanKey) {
               sendResponse({ ok: false, error: 'Notion API key is missing. Please enter your secret_... token in Settings.' });
@@ -294,37 +293,15 @@ chrome.runtime.onMessage.addListener(
               return;
             }
 
-            const response = await fetch(
-              `https://api.notion.com/v1/databases/${cleanDbId}/query`,
+            const json = await callNotionApi(
+              `/databases/${cleanDbId}/query`,
+              'POST',
+              cleanKey,
+              proxyUrl,
               {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${cleanKey}`,
-                  'Notion-Version': '2022-06-28',
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  page_size: 100,
-                }),
+                page_size: 100,
               }
             );
-
-            if (!response.ok) {
-              let errorMsg = `Notion API ${response.status}: ${response.statusText}`;
-              try {
-                const errJson = await response.json();
-                if (errJson.message) {
-                  errorMsg = `${errJson.message} (${errJson.code || response.status})`;
-                }
-              } catch {
-                const text = await response.text().catch(() => '');
-                if (text) errorMsg += ` - ${text}`;
-              }
-              sendResponse({ ok: false, error: errorMsg });
-              return;
-            }
-
-            const json = await response.json();
 
             // Helper: extract a property value regardless of Notion property type
             const getTitle = (props: any): string => {
@@ -390,9 +367,9 @@ chrome.runtime.onMessage.addListener(
             if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
               errorMsg =
                 'Failed to fetch from Notion API. Please verify:\n' +
-                '1. In edge://extensions, click Details on this extension and ensure "Site access" is set to "On all sites".\n' +
-                '2. Ensure your Notion database is shared with your integration (open your Notion Database page -> click "..." -> Connections -> Add your integration).\n' +
-                '3. Check your internet connection or any VPN/firewall blocking api.notion.com.';
+                '1. If using corporate network or VPN blocking api.notion.com, configure the Google Apps Script relay URL in Settings.\n' +
+                '2. In edge://extensions or chrome://extensions, click Details on this extension and ensure "Site access" is set to "On all sites".\n' +
+                '3. Ensure your Notion database is shared with your integration (open your Notion Database page -> click "..." -> Connections -> Add your integration).';
             }
             sendResponse({ ok: false, error: errorMsg });
           }
@@ -547,18 +524,20 @@ chrome.runtime.onMessage.addListener(
       }
 
       // ── Get detailed body blocks of a Notion task (checks for existing strategy & extracts context) ──
+      // ── Get detailed body blocks of a Notion task (checks for existing strategy & extracts context) ──
       case 'GET_NOTION_TASK_DETAILS': {
         (async () => {
           try {
             const stored = (await chrome.storage.local.get('po_notion_config')) as {
-              po_notion_config?: { apiKey?: string };
+              po_notion_config?: { apiKey?: string; notionProxyUrl?: string; proxyUrl?: string };
             };
             const apiKey = (message.apiKey || stored.po_notion_config?.apiKey || '').trim();
+            const proxyUrl = (message.proxyUrl || message.notionProxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '').trim();
             if (!apiKey) {
               sendResponse({ ok: false, error: 'Notion API key is missing. Check Settings.' });
               return;
             }
-            const res = await getNotionTaskDetails({ apiKey }, message.taskId);
+            const res = await getNotionTaskDetails({ apiKey, proxyUrl }, message.taskId);
             sendResponse(res);
           } catch (err: any) {
             sendResponse({ ok: false, error: String(err) });
@@ -572,15 +551,16 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             const stored = (await chrome.storage.local.get('po_notion_config')) as {
-              po_notion_config?: { apiKey?: string };
+              po_notion_config?: { apiKey?: string; notionProxyUrl?: string; proxyUrl?: string };
             };
             const apiKey = (message.apiKey || stored.po_notion_config?.apiKey || '').trim();
+            const proxyUrl = (message.proxyUrl || message.notionProxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '').trim();
             if (!apiKey) {
               sendResponse({ ok: false, error: 'Notion API key is missing. Check Settings.' });
               return;
             }
             const res = await injectNotionTaskStrategy(
-              { apiKey },
+              { apiKey, proxyUrl },
               message.taskId,
               message.strategyText,
               message.existingBlockId
@@ -633,15 +613,14 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             let config = message.config;
-            if (!config?.apiKey || !config?.databaseId) {
-              const stored = (await chrome.storage.local.get('po_notion_config')) as {
-                po_notion_config?: { apiKey?: string; databaseId?: string };
-              };
-              config = {
-                apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
-                databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
-              };
-            }
+            const stored = (await chrome.storage.local.get('po_notion_config')) as {
+              po_notion_config?: { apiKey?: string; databaseId?: string; notionProxyUrl?: string; proxyUrl?: string };
+            };
+            config = {
+              apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
+              databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
+              notionProxyUrl: config?.notionProxyUrl || config?.proxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '',
+            };
 
             const result = await createNotionTask(config, message.payload);
             if (result.ok && result.taskId) {
@@ -678,14 +657,13 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             let config = message.config;
-            if (!config?.apiKey) {
-              const stored = (await chrome.storage.local.get('po_notion_config')) as {
-                po_notion_config?: { apiKey?: string };
-              };
-              config = {
-                apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
-              };
-            }
+            const stored = (await chrome.storage.local.get('po_notion_config')) as {
+              po_notion_config?: { apiKey?: string; notionProxyUrl?: string; proxyUrl?: string };
+            };
+            config = {
+              apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
+              notionProxyUrl: config?.notionProxyUrl || config?.proxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '',
+            };
 
             const result = await appendNotionTaskContext(config, message.payload);
             if (result.ok) {
@@ -727,25 +705,25 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             let config = message.config;
-            if (!config?.apiKey || !config?.databaseId) {
-              const stored = (await chrome.storage.local.get('po_notion_config')) as {
-                po_notion_config?: { apiKey?: string; databaseId?: string };
-              };
-              config = {
-                apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
-                databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
-              };
-            }
+            const stored = (await chrome.storage.local.get('po_notion_config')) as {
+              po_notion_config?: { apiKey?: string; databaseId?: string; notionProxyUrl?: string; proxyUrl?: string };
+            };
+            config = {
+              apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
+              databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
+              notionProxyUrl: config?.notionProxyUrl || config?.proxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '',
+            };
 
             const cleanKey = cleanNotionApiKey(config?.apiKey || '');
             const cleanDbId = extractNotionDatabaseId(config?.databaseId || '');
+            const proxyUrl = (config?.notionProxyUrl || '').trim();
 
             if (!cleanKey || !cleanDbId) {
               sendResponse({ ok: false, error: 'Notion configuration is missing or invalid.' });
               return;
             }
 
-            const schema = await inspectDatabaseSchema(cleanKey, cleanDbId);
+            const schema = await inspectDatabaseSchema(cleanKey, cleanDbId, proxyUrl);
             sendResponse({ ok: true, data: schema });
           } catch (err: any) {
             sendResponse({ ok: false, error: String(err) });

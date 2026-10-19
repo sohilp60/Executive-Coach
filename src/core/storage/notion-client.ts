@@ -11,6 +11,91 @@ import type { NotionTask } from '../../types/schema';
 export interface NotionConfig {
   apiKey: string;
   databaseId: string;
+  notionProxyUrl?: string;
+  proxyUrl?: string;
+}
+
+/**
+ * Universal Notion API transport relay.
+ * When proxyUrl is provided (e.g. Google Apps Script Web App), routes all requests through it
+ * using 'Content-Type': 'text/plain;charset=UTF-8' to prevent browser CORS preflight checks,
+ * completely bypassing corporate firewall blocks on api.notion.com.
+ */
+export async function callNotionApi(
+  endpoint: string,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  token: string,
+  proxyUrl?: string,
+  body?: any
+): Promise<any> {
+  const cleanToken = cleanNotionApiKey(token);
+  const trimmedProxy = proxyUrl?.trim() || '';
+
+  // Normalized endpoint ensuring leading slash, e.g. /databases/... or /pages
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  if (trimmedProxy) {
+    const res = await fetch(trimmedProxy, {
+      method: 'POST',
+      headers: {
+        // CRITICAL: Using text/plain prevents browser CORS preflight (OPTIONS) check
+        'Content-Type': 'text/plain;charset=UTF-8',
+      },
+      body: JSON.stringify({
+        endpoint: normalizedEndpoint,
+        method,
+        token: cleanToken,
+        body,
+      }),
+    });
+
+    const text = await res.text();
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`Invalid response from proxy relay: ${text}`);
+    }
+
+    if (!res.ok || json.object === 'error') {
+      throw new Error(json.message || `Notion API Error via Proxy (${res.status})`);
+    }
+
+    return json;
+  }
+
+  // Fallback to direct Notion API if no proxyUrl is configured
+  const directUrl = endpoint.startsWith('http')
+    ? endpoint
+    : `https://api.notion.com/v1${normalizedEndpoint}`;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${cleanToken}`,
+    'Notion-Version': '2022-06-28',
+  };
+  if (body && method !== 'GET') {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const res = await fetch(directUrl, {
+    method,
+    headers,
+    body: body && method !== 'GET' ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid response from Notion API: ${text}`);
+  }
+
+  if (!res.ok || json.object === 'error') {
+    throw new Error(json.message || `Notion API Error (${res.status})`);
+  }
+
+  return json;
 }
 
 /**
@@ -81,31 +166,20 @@ export async function fetchNotionTasks(
   config: NotionConfig
 ): Promise<NotionTask[]> {
   try {
-    const response = await fetch(
-      `https://api.notion.com/v1/databases/${config.databaseId}/query`,
+    const cleanDbId = extractNotionDatabaseId(config.databaseId);
+    const proxyUrl = config.notionProxyUrl || config.proxyUrl || '';
+    const data = await callNotionApi(
+      `/databases/${cleanDbId}/query`,
+      'POST',
+      config.apiKey,
+      proxyUrl,
       {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${config.apiKey}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          // Return most-recently-edited items first
-          sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
-          page_size: 100,
-        }),
+        // Return most-recently-edited items first
+        sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+        page_size: 100,
       }
     );
 
-    if (!response.ok) {
-      console.warn(
-        `[notion-client] HTTP ${response.status}: ${response.statusText}`
-      );
-      return [];
-    }
-
-    const data = await response.json();
     const pages: NotionPage[] = data.results ?? [];
     return pages.map(pageToTask);
   } catch (err) {
@@ -398,29 +472,19 @@ export function markdownToNotionBlocks(markdown: string): any[] {
  * and check if an existing Coach Strategy callout/section already exists.
  */
 export async function getNotionTaskDetails(
-  config: { apiKey: string },
+  config: { apiKey: string; proxyUrl?: string; notionProxyUrl?: string },
   taskId: string
 ): Promise<{ ok: boolean; data?: NotionTaskDetails; error?: string }> {
   try {
     const cleanId = taskId.replace(/-/g, '');
-    const cleanKey = config.apiKey.trim();
-    const response = await fetch(
-      `https://api.notion.com/v1/blocks/${cleanId}/children?page_size=100`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${cleanKey}`,
-          'Notion-Version': '2022-06-28',
-        },
-      }
+    const proxyUrl = config.proxyUrl || config.notionProxyUrl || '';
+    const data = await callNotionApi(
+      `/blocks/${cleanId}/children?page_size=100`,
+      'GET',
+      config.apiKey,
+      proxyUrl
     );
 
-    if (!response.ok) {
-      const errTxt = await response.text().catch(() => '');
-      return { ok: false, error: `Notion API HTTP ${response.status}: ${errTxt}` };
-    }
-
-    const data = await response.json();
     const blocks: any[] = data.results || [];
 
     let existingStrategyBlockId: string | undefined;
@@ -443,36 +507,30 @@ export async function getNotionTaskDetails(
         // If the strategy block has nested child blocks, retrieve their text
         if (block.has_children) {
           try {
-            const childRes = await fetch(
-              `https://api.notion.com/v1/blocks/${block.id}/children?page_size=100`,
-              {
-                headers: {
-                  Authorization: `Bearer ${cleanKey}`,
-                  'Notion-Version': '2022-06-28',
-                },
-              }
+            const childData = await callNotionApi(
+              `/blocks/${block.id}/children?page_size=100`,
+              'GET',
+              config.apiKey,
+              proxyUrl
             );
-            if (childRes.ok) {
-              const childData = await childRes.json();
-              const childBlocks = childData.results || [];
-              const extracted: string[] = [];
-              for (const cb of childBlocks) {
-                const cType = cb.type;
-                const cRt = cb[cType]?.rich_text;
-                const cText = Array.isArray(cRt) ? cRt.map((t: any) => t.plain_text || '').join('') : '';
-                if (cText.trim()) {
-                  if (cType === 'bulleted_list_item') {
-                    extracted.push(`* ${cText.trim()}`);
-                  } else if (cType === 'numbered_list_item') {
-                    extracted.push(`1. ${cText.trim()}`);
-                  } else {
-                    extracted.push(cText.trim());
-                  }
+            const childBlocks = childData.results || [];
+            const extracted: string[] = [];
+            for (const cb of childBlocks) {
+              const cType = cb.type;
+              const cRt = cb[cType]?.rich_text;
+              const cText = Array.isArray(cRt) ? cRt.map((t: any) => t.plain_text || '').join('') : '';
+              if (cText.trim()) {
+                if (cType === 'bulleted_list_item') {
+                  extracted.push(`* ${cText.trim()}`);
+                } else if (cType === 'numbered_list_item') {
+                  extracted.push(`1. ${cText.trim()}`);
+                } else {
+                  extracted.push(cText.trim());
                 }
               }
-              if (extracted.length > 0) {
-                existingStrategyText = extracted.join('\n\n');
-              }
+            }
+            if (extracted.length > 0) {
+              existingStrategyText = extracted.join('\n\n');
             }
           } catch {
             // ignore child fetch failure
@@ -506,25 +564,24 @@ export async function getNotionTaskDetails(
  * inside a blue Callout block so it renders with first-class Notion typography.
  */
 export async function injectNotionTaskStrategy(
-  config: { apiKey: string },
+  config: { apiKey: string; proxyUrl?: string; notionProxyUrl?: string },
   taskId: string,
   strategyText: string,
   existingBlockId?: string
 ): Promise<{ ok: boolean; blockId?: string; error?: string }> {
   try {
     const cleanId = taskId.replace(/-/g, '');
-    const cleanKey = config.apiKey.trim();
+    const proxyUrl = config.proxyUrl || config.notionProxyUrl || '';
 
     // If an older strategy block exists, delete it first to avoid duplicate blocks
     if (existingBlockId) {
       try {
-        await fetch(`https://api.notion.com/v1/blocks/${existingBlockId}`, {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${cleanKey}`,
-            'Notion-Version': '2022-06-28',
-          },
-        });
+        await callNotionApi(
+          `/blocks/${existingBlockId}`,
+          'DELETE',
+          config.apiKey,
+          proxyUrl
+        );
       } catch (err) {
         console.warn('[notion-client] Could not delete old strategy block:', err);
       }
@@ -554,16 +611,13 @@ export async function injectNotionTaskStrategy(
     ];
 
     // Attempt 1: Append Callout with nested children directly
-    const appendResponse = await fetch(
-      `https://api.notion.com/v1/blocks/${cleanId}/children`,
-      {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${cleanKey}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    try {
+      const appendData = await callNotionApi(
+        `/blocks/${cleanId}/children`,
+        'PATCH',
+        config.apiKey,
+        proxyUrl,
+        {
           children: [
             {
               object: 'block',
@@ -579,28 +633,20 @@ export async function injectNotionTaskStrategy(
               },
             },
           ],
-        }),
-      }
-    );
+        }
+      );
 
-    if (appendResponse.ok) {
-      const appendData = await appendResponse.json();
       const newBlockId = appendData.results?.[0]?.id;
       return { ok: true, blockId: newBlockId };
-    }
-
-    // Attempt 2 (Fallback): If Notion rejects children inside callout on initial creation,
-    // create the callout first, then append the children to the created callout block
-    const fallbackCalloutRes = await fetch(
-      `https://api.notion.com/v1/blocks/${cleanId}/children`,
-      {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${cleanKey}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    } catch {
+      // Attempt 2 (Fallback): If Notion rejects children inside callout on initial creation,
+      // create the callout first, then append the children to the created callout block
+      const fallbackData = await callNotionApi(
+        `/blocks/${cleanId}/children`,
+        'PATCH',
+        config.apiKey,
+        proxyUrl,
+        {
           children: [
             {
               object: 'block',
@@ -615,38 +661,27 @@ export async function injectNotionTaskStrategy(
               },
             },
           ],
-        }),
-      }
-    );
-
-    if (!fallbackCalloutRes.ok) {
-      const errTxt = await fallbackCalloutRes.text().catch(() => '');
-      return { ok: false, error: `Failed to inject strategy into Notion (HTTP ${fallbackCalloutRes.status}): ${errTxt}` };
-    }
-
-    const fallbackData = await fallbackCalloutRes.json();
-    const calloutBlockId = fallbackData.results?.[0]?.id;
-
-    if (calloutBlockId && parsedBlocks.length > 0) {
-      await fetch(
-        `https://api.notion.com/v1/blocks/${calloutBlockId}/children`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${cleanKey}`,
-            'Notion-Version': '2022-06-28',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            children: parsedBlocks,
-          }),
         }
-      ).catch((err) => {
-        console.warn('[notion-client] Could not append nested children to callout:', err);
-      });
-    }
+      );
 
-    return { ok: true, blockId: calloutBlockId };
+      const calloutBlockId = fallbackData.results?.[0]?.id;
+
+      if (calloutBlockId && parsedBlocks.length > 0) {
+        await callNotionApi(
+          `/blocks/${calloutBlockId}/children`,
+          'PATCH',
+          config.apiKey,
+          proxyUrl,
+          {
+            children: parsedBlocks,
+          }
+        ).catch((err) => {
+          console.warn('[notion-client] Could not append nested children to callout:', err);
+        });
+      }
+
+      return { ok: true, blockId: calloutBlockId };
+    }
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Failed to inject strategy into Notion' };
   }

@@ -49,6 +49,13 @@ export interface RouterSettings {
   strictWorkPrivacyMode: boolean;
 }
 
+export interface NotionConfig {
+  apiKey: string;
+  databaseId: string;
+  notionProxyUrl?: string;
+  proxyUrl?: string;
+}
+
 export interface NotionTask {
   id: string;
   title: string;

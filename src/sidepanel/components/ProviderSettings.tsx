@@ -168,6 +168,7 @@ export default function ProviderSettings({
   const [localRouter, setLocalRouter] = useState<RouterSettings>(routerSettings);
   const [notionApiKey, setNotionApiKey] = useState('');
   const [notionDbId, setNotionDbId] = useState('');
+  const [notionProxyUrl, setNotionProxyUrl] = useState('');
   const [gdriveClientId, setGdriveClientId] = useState('');
   const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'fail'>>({});
   const [saved, setSaved] = useState(false);
@@ -246,6 +247,7 @@ export default function ProviderSettings({
       if (result.po_notion_config) {
         setNotionApiKey(result.po_notion_config.apiKey || '');
         setNotionDbId(result.po_notion_config.databaseId || '');
+        setNotionProxyUrl(result.po_notion_config.notionProxyUrl || result.po_notion_config.proxyUrl || '');
       }
       if (result.po_gdrive_client_id) {
         setGdriveClientId(result.po_gdrive_client_id as string);
@@ -541,11 +543,19 @@ export default function ProviderSettings({
 
     const cleanKey = notionApiKey.trim();
     const cleanDb = notionDbId.trim();
+    const cleanProxy = notionProxyUrl.trim();
 
     try {
       const response = await new Promise<any>((resolve, reject) => {
         chrome.runtime.sendMessage(
-          { type: 'FETCH_NOTION_TASKS', config: { apiKey: cleanKey, databaseId: cleanDb } },
+          {
+            type: 'FETCH_NOTION_TASKS',
+            config: {
+              apiKey: cleanKey,
+              databaseId: cleanDb,
+              notionProxyUrl: cleanProxy,
+            },
+          },
           (resp) => {
             if (chrome.runtime.lastError) {
               reject(new Error(chrome.runtime.lastError.message));
@@ -594,7 +604,11 @@ export default function ProviderSettings({
 
     // Save Notion and GDrive settings
     chrome.storage.local.set({
-      po_notion_config: { apiKey: notionApiKey, databaseId: notionDbId },
+      po_notion_config: {
+        apiKey: notionApiKey.trim(),
+        databaseId: notionDbId.trim(),
+        notionProxyUrl: notionProxyUrl.trim(),
+      },
       po_gdrive_client_id: gdriveClientId,
     });
 
@@ -1223,6 +1237,24 @@ export default function ProviderSettings({
                 className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
               />
             </div>
+
+            {/* Google Apps Script Relay / Proxy URL (Corporate Firewall Bypass) */}
+            <div className="relative">
+              <Zap
+                size={12}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+              />
+              <input
+                value={notionProxyUrl}
+                onChange={(e) => {
+                  setNotionProxyUrl(e.target.value);
+                  setNotionFeedback(null);
+                }}
+                placeholder="Google Apps Script Relay URL (optional, for corporate firewalls)"
+                className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
+              />
+            </div>
+
             <button
               type="button"
               onClick={testNotion}
@@ -1255,8 +1287,8 @@ export default function ProviderSettings({
               </div>
             )}
 
-            <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-navy-950/60 p-3 rounded-lg border border-slate-300 dark:border-navy-800 space-y-1 font-medium">
-              <p className="font-bold text-slate-900 dark:text-white">💡 Notion Checklist:</p>
+            <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-navy-950/60 p-3 rounded-lg border border-slate-300 dark:border-navy-800 space-y-1.5 font-medium">
+              <p className="font-bold text-slate-900 dark:text-white">💡 Notion Checklist & Firewall Bypass:</p>
               <ul className="list-disc list-inside space-y-1">
                 <li>
                   <strong>Share database:</strong> In Notion, open your Database page → click{' '}
@@ -1265,6 +1297,9 @@ export default function ProviderSettings({
                 </li>
                 <li>
                   <strong>Database ID:</strong> You can paste either the 32-character ID or the full Notion database URL directly.
+                </li>
+                <li>
+                  <strong>Corporate Firewall Bypass:</strong> If your company network blocks <code className="font-mono text-slate-800 dark:text-slate-200">api.notion.com</code>, deploy our Google Apps Script relay and paste your Web App URL (<code className="font-mono text-slate-800 dark:text-slate-200">https://script.google.com/macros/s/.../exec</code>) above to route all requests seamlessly.
                 </li>
               </ul>
             </div>

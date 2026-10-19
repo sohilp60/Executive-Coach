@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Senior PO Executive Coach",
-  "version": "1.0.0",
+  "version": "0.1.1",
   "description": "AI Executive Coach & Anti-Procrastination Companion for Senior Product Owners",
   "permissions": [
     "sidePanel",
@@ -21,6 +21,8 @@
     "https://notion.com/*",
     "https://*.notion.so/*",
     "https://notion.so/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*",
     "https://www.googleapis.com/*",
     "https://oauth2.googleapis.com/*",
     "https://generativelanguage.googleapis.com/*",

@@ -17,6 +17,7 @@ import {
   injectNotionTaskStrategy,
   extractNotionDatabaseId,
   cleanNotionApiKey,
+  callNotionApi,
 } from './notion-client';
 
 export interface NotionPageCreateResult {
@@ -50,24 +51,17 @@ export interface NotionDatabaseMetadata {
  */
 export async function inspectDatabaseSchema(
   apiKey: string,
-  databaseId: string
+  databaseId: string,
+  proxyUrl?: string
 ): Promise<NotionDatabaseMetadata> {
   try {
     const cleanDbId = cleanDatabaseId(databaseId);
-    const cleanKey = cleanNotionApiKey(apiKey);
-    const res = await fetch(`https://api.notion.com/v1/databases/${cleanDbId}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${cleanKey}`,
-        'Notion-Version': '2022-06-28',
-      },
-    });
-
-    if (!res.ok) {
-      return { titlePropName: 'Name' };
-    }
-
-    const data = await res.json();
+    const data = await callNotionApi(
+      `/databases/${cleanDbId}`,
+      'GET',
+      apiKey,
+      proxyUrl
+    );
     const props = data.properties || {};
 
     let titlePropName = 'Name';
@@ -214,12 +208,13 @@ function buildSourceCaptureBlocks(capture: CapturePayload, contextSummary: strin
  * Creates a brand new Notion Task page in the specified database.
  */
 export async function createNotionTask(
-  config: { apiKey: string; databaseId: string },
+  config: { apiKey: string; databaseId: string; notionProxyUrl?: string; proxyUrl?: string },
   payload: NotionCreateTaskPayload
 ): Promise<NotionPageCreateResult> {
   try {
     const cleanDbId = cleanDatabaseId(config.databaseId);
-    const apiKey = config.apiKey.trim();
+    const apiKey = cleanNotionApiKey(config.apiKey);
+    const proxyUrl = config.notionProxyUrl || config.proxyUrl || '';
 
     if (!apiKey) {
       return { ok: false, error: 'Notion API key is missing. Please check Settings.' };
@@ -229,7 +224,7 @@ export async function createNotionTask(
     }
 
     // Inspect database properties to map keys dynamically
-    const schema = await inspectDatabaseSchema(apiKey, cleanDbId);
+    const schema = await inspectDatabaseSchema(apiKey, cleanDbId, proxyUrl);
 
     // Build Page Properties
     const properties: Record<string, any> = {
@@ -344,33 +339,17 @@ export async function createNotionTask(
       });
     }
 
-    const cleanKey = cleanNotionApiKey(apiKey);
-    const response = await fetch('https://api.notion.com/v1/pages', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${cleanKey}`,
-        'Notion-Version': '2022-06-28',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const createdPage = await callNotionApi(
+      '/pages',
+      'POST',
+      apiKey,
+      proxyUrl,
+      {
         parent: { database_id: cleanDbId },
         properties,
         children,
-      }),
-    });
-
-    if (!response.ok) {
-      let errMsg = `Notion API ${response.status}: ${response.statusText}`;
-      try {
-        const errJson = await response.json();
-        if (errJson.message) errMsg = `${errJson.message} (${errJson.code || response.status})`;
-      } catch {
-        // use default
       }
-      return { ok: false, error: errMsg };
-    }
-
-    const createdPage = await response.json();
+    );
 
     return {
       ok: true,
@@ -387,11 +366,11 @@ export async function createNotionTask(
  * Appends captured context to an existing Notion page.
  */
 export async function appendNotionTaskContext(
-  config: { apiKey: string },
+  config: { apiKey: string; proxyUrl?: string; notionProxyUrl?: string },
   payload: NotionAppendTaskPayload
 ): Promise<NotionPageCreateResult> {
   try {
-    const apiKey = config.apiKey.trim();
+    const apiKey = cleanNotionApiKey(config.apiKey);
     if (!apiKey) {
       return { ok: false, error: 'Notion API key is missing. Please check Settings.' };
     }
@@ -408,35 +387,20 @@ export async function appendNotionTaskContext(
       ...buildSourceCaptureBlocks(payload.capturePayload, payload.contextSummary),
     ];
 
-    const cleanKey = cleanNotionApiKey(apiKey);
-    const response = await fetch(
-      `https://api.notion.com/v1/blocks/${payload.taskId}/children`,
-      {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${cleanKey}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ children }),
-      }
+    const proxyUrl = config.proxyUrl || config.notionProxyUrl || '';
+    const cleanTaskId = payload.taskId.replace(/-/g, '');
+    await callNotionApi(
+      `/blocks/${cleanTaskId}/children`,
+      'PATCH',
+      apiKey,
+      proxyUrl,
+      { children }
     );
-
-    if (!response.ok) {
-      let errMsg = `Notion API ${response.status}: ${response.statusText}`;
-      try {
-        const errJson = await response.json();
-        if (errJson.message) errMsg = `${errJson.message} (${errJson.code || response.status})`;
-      } catch {
-        // use default
-      }
-      return { ok: false, error: errMsg };
-    }
 
     // If strategy regeneration was also requested
     if (payload.generateStrategy && payload.strategyText) {
       await injectNotionTaskStrategy(
-        { apiKey },
+        { apiKey, proxyUrl },
         payload.taskId,
         payload.strategyText
       );
