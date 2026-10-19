@@ -49,17 +49,71 @@ const GDRIVE_FOLDER_NAME = 'PO-Executive-Coach-Backups';
 const GDRIVE_FILE_NAME = 'po-memory-store.json';
 
 // ──────────────────────────────────────────────────────────
-//  Extension Install & Side Panel
+//  Extension Install & Side Panel (Edge + Chrome compatible)
 // ──────────────────────────────────────────────────────────
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+export async function openExecutiveCoach(windowId?: number, tabId?: number) {
+  // 1. Try native Chromium sidePanel API
+  if (chrome.sidePanel?.open) {
+    try {
+      if (windowId) {
+        await chrome.sidePanel.open({ windowId });
+        return;
+      } else if (tabId) {
+        await chrome.sidePanel.open({ tabId });
+        return;
+      }
+    } catch (err) {
+      console.warn('[ServiceWorker] chrome.sidePanel.open failed, trying popup window fallback:', err);
+    }
+  }
+
+  // 2. Fallback for Edge when sidePanel is restricted, disabled, or fails
+  try {
+    const sidePanelUrl = chrome.runtime.getURL('src/sidepanel/index.html');
+    await chrome.windows.create({
+      url: sidePanelUrl,
+      type: 'popup',
+      width: 440,
+      height: 720,
+      focused: true,
+    });
+  } catch (winErr) {
+    console.error('[ServiceWorker] Fallback window creation failed:', winErr);
+  }
+}
+
+// Enable openPanelOnActionClick for browsers that support it (Chrome 116+)
+try {
+  if (chrome.sidePanel?.setPanelBehavior) {
+    chrome.sidePanel
+      .setPanelBehavior({ openPanelOnActionClick: true })
+      .catch((err) => {
+        console.warn('[ServiceWorker] setPanelBehavior not supported or failed:', err);
+      });
+  }
+} catch (err) {
+  console.warn('[ServiceWorker] setPanelBehavior error:', err);
+}
+
+// Critical for Microsoft Edge: toolbar action icon clicks trigger action.onClicked
+if (chrome.action?.onClicked) {
+  chrome.action.onClicked.addListener(async (tab) => {
+    await openExecutiveCoach(tab?.windowId, tab?.id);
+  });
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   setupDailyAlarms();
 
-  // Register context menu for Executive Capture
+  // Register context menu items
   try {
     chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: 'po-coach-open-sidepanel',
+        title: '🚀 Open PO Executive Coach',
+        contexts: ['action', 'page'],
+      });
       chrome.contextMenus.create({
         id: 'po-coach-capture-to-notion',
         title: '🎯 PO Coach: Capture to Notion',
@@ -86,11 +140,7 @@ async function triggerCaptureForTab(tabId: number, windowId?: number, explicitTe
     const payload = results?.[0]?.result;
     if (payload) {
       await chrome.storage.local.set({ _pendingCapture: payload });
-      if (windowId && (chrome.sidePanel as any)?.open) {
-        try {
-          await (chrome.sidePanel as any).open({ windowId });
-        } catch {}
-      }
+      await openExecutiveCoach(windowId, tabId);
       chrome.runtime.sendMessage({ type: 'CAPTURE_READY', payload }).catch(() => {});
     }
   } catch (err) {
@@ -99,7 +149,9 @@ async function triggerCaptureForTab(tabId: number, windowId?: number, explicitTe
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'po-coach-capture-to-notion' && tab?.id) {
+  if (info.menuItemId === 'po-coach-open-sidepanel') {
+    await openExecutiveCoach(tab?.windowId, tab?.id);
+  } else if (info.menuItemId === 'po-coach-capture-to-notion' && tab?.id) {
     await triggerCaptureForTab(tab.id, tab.windowId, info.selectionText);
   }
 });
