@@ -17,6 +17,10 @@
   ],
   "host_permissions": [
     "https://api.notion.com/*",
+    "https://*.notion.com/*",
+    "https://notion.com/*",
+    "https://*.notion.so/*",
+    "https://notion.so/*",
     "https://www.googleapis.com/*",
     "https://oauth2.googleapis.com/*",
     "https://generativelanguage.googleapis.com/*",

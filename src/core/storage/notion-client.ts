@@ -13,6 +13,49 @@ export interface NotionConfig {
   databaseId: string;
 }
 
+/**
+ * Normalizes an API key, removing accidental 'Bearer ' prefixes, whitespace, and wrapping quotes.
+ */
+export function cleanNotionApiKey(rawKey: string): string {
+  if (!rawKey) return '';
+  return rawKey
+    .trim()
+    .replace(/^Bearer\s+/i, '')
+    .replace(/^["']|["']$/g, '');
+}
+
+/**
+ * Extracts a clean 32-character database ID from a raw ID, UUID, or full Notion URL.
+ */
+export function extractNotionDatabaseId(rawId: string): string {
+  if (!rawId) return '';
+  const clean = rawId.trim().replace(/^["']|["']$/g, '');
+
+  // 1. If hash exists (#), check the fragment first (for inline databases on a page)
+  if (clean.includes('#')) {
+    const afterHash = clean.split('#')[1];
+    const hashMatch = afterHash.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+    if (hashMatch) {
+      return hashMatch[1].replace(/-/g, '');
+    }
+  }
+
+  // 2. Remove query string (?v=...) so view IDs are not matched instead of database ID
+  const beforeQuery = clean.split('?')[0];
+  const urlMatch = beforeQuery.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+  if (urlMatch) {
+    return urlMatch[1].replace(/-/g, '');
+  }
+
+  // 3. Fallback to full string regex search
+  const fullMatch = clean.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+  if (fullMatch) {
+    return fullMatch[1].replace(/-/g, '');
+  }
+
+  return clean.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop()?.replace(/-/g, '') || clean;
+}
+
 interface NotionPage {
   id: string;
   url: string;

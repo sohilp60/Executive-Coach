@@ -11,7 +11,12 @@
 import { setupDailyAlarms, ALARM_NAMES, type AlarmName } from './alarm-scheduler';
 import { generateIconDataUrl, updateBadgeForTasks } from './badge-manager';
 import { extractPageContext, extractCapturePayload } from '../content/dom-extractor';
-import { getNotionTaskDetails, injectNotionTaskStrategy } from '../core/storage/notion-client';
+import {
+  getNotionTaskDetails,
+  injectNotionTaskStrategy,
+  cleanNotionApiKey,
+  extractNotionDatabaseId,
+} from '../core/storage/notion-client';
 import {
   createNotionTask,
   appendNotionTaskContext,
@@ -276,24 +281,18 @@ chrome.runtime.onMessage.addListener(
               }
             }
 
-            const cleanKey = (config?.apiKey || '').trim();
-            let rawDbId = (config?.databaseId || '').trim();
+            const cleanKey = cleanNotionApiKey(config?.apiKey || '');
+            const cleanDbId = extractNotionDatabaseId(config?.databaseId || '');
 
             if (!cleanKey) {
               sendResponse({ ok: false, error: 'Notion API key is missing. Please enter your secret_... token in Settings.' });
               return;
             }
 
-            if (!rawDbId) {
-              sendResponse({ ok: false, error: 'Notion Database ID is missing. Please enter your database ID or URL in Settings.' });
+            if (!cleanDbId) {
+              sendResponse({ ok: false, error: 'Could not extract a valid Notion Database ID. Please check the URL or ID in Settings.' });
               return;
             }
-
-            // Extract 32-character hex ID (works whether user pasted 32 hex chars, hyphenated UUID, or full URL with ?v=...)
-            const uuidMatch = rawDbId.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-            const cleanDbId = uuidMatch
-              ? uuidMatch[1].replace(/-/g, '')
-              : rawDbId.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop()?.replace(/-/g, '') || rawDbId;
 
             const response = await fetch(
               `https://api.notion.com/v1/databases/${cleanDbId}/query`,
@@ -385,8 +384,17 @@ chrome.runtime.onMessage.addListener(
             await updateBadgeForTasks(tasks);
 
             sendResponse({ ok: true, data: tasks });
-          } catch (err) {
-            sendResponse({ ok: false, error: String(err) });
+          } catch (err: any) {
+            console.warn('[ServiceWorker] Notion fetch failed:', err);
+            let errorMsg = String(err?.message || err);
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+              errorMsg =
+                'Failed to fetch from Notion API. Please verify:\n' +
+                '1. In edge://extensions, click Details on this extension and ensure "Site access" is set to "On all sites".\n' +
+                '2. Ensure your Notion database is shared with your integration (open your Notion Database page -> click "..." -> Connections -> Add your integration).\n' +
+                '3. Check your internet connection or any VPN/firewall blocking api.notion.com.';
+            }
+            sendResponse({ ok: false, error: errorMsg });
           }
         })();
         return true;
@@ -729,12 +737,15 @@ chrome.runtime.onMessage.addListener(
               };
             }
 
-            if (!config?.apiKey || !config?.databaseId) {
-              sendResponse({ ok: false, error: 'Notion configuration is missing.' });
+            const cleanKey = cleanNotionApiKey(config?.apiKey || '');
+            const cleanDbId = extractNotionDatabaseId(config?.databaseId || '');
+
+            if (!cleanKey || !cleanDbId) {
+              sendResponse({ ok: false, error: 'Notion configuration is missing or invalid.' });
               return;
             }
 
-            const schema = await inspectDatabaseSchema(config.apiKey, config.databaseId);
+            const schema = await inspectDatabaseSchema(cleanKey, cleanDbId);
             sendResponse({ ok: true, data: schema });
           } catch (err: any) {
             sendResponse({ ok: false, error: String(err) });

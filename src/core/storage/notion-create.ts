@@ -15,6 +15,8 @@ import {
   parseInlineMarkdownToRichText,
   markdownToNotionBlocks,
   injectNotionTaskStrategy,
+  extractNotionDatabaseId,
+  cleanNotionApiKey,
 } from './notion-client';
 
 export interface NotionPageCreateResult {
@@ -25,17 +27,7 @@ export interface NotionPageCreateResult {
   error?: string;
 }
 
-/**
- * Extracts clean 32-character database ID from UUID or URL.
- */
-function cleanDatabaseId(rawId: string): string {
-  const clean = rawId.trim();
-  const uuidMatch = clean.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-  if (uuidMatch) {
-    return uuidMatch[1].replace(/-/g, '');
-  }
-  return clean.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop()?.replace(/-/g, '') || clean;
-}
+const cleanDatabaseId = extractNotionDatabaseId;
 
 export interface NotionDatabaseMetadata {
   titlePropName: string;
@@ -62,10 +54,11 @@ export async function inspectDatabaseSchema(
 ): Promise<NotionDatabaseMetadata> {
   try {
     const cleanDbId = cleanDatabaseId(databaseId);
+    const cleanKey = cleanNotionApiKey(apiKey);
     const res = await fetch(`https://api.notion.com/v1/databases/${cleanDbId}`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
+        Authorization: `Bearer ${cleanKey}`,
         'Notion-Version': '2022-06-28',
       },
     });
@@ -351,10 +344,11 @@ export async function createNotionTask(
       });
     }
 
+    const cleanKey = cleanNotionApiKey(apiKey);
     const response = await fetch('https://api.notion.com/v1/pages', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${cleanKey}`,
         'Notion-Version': '2022-06-28',
         'Content-Type': 'application/json',
       },
@@ -414,12 +408,13 @@ export async function appendNotionTaskContext(
       ...buildSourceCaptureBlocks(payload.capturePayload, payload.contextSummary),
     ];
 
+    const cleanKey = cleanNotionApiKey(apiKey);
     const response = await fetch(
       `https://api.notion.com/v1/blocks/${payload.taskId}/children`,
       {
         method: 'PATCH',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${cleanKey}`,
           'Notion-Version': '2022-06-28',
           'Content-Type': 'application/json',
         },
