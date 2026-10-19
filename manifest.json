@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "Senior PO Executive Coach",
+  "version": "1.0.0",
+  "description": "AI Executive Coach & Anti-Procrastination Companion for Senior Product Owners",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "unlimitedStorage",
+    "activeTab",
+    "tabs",
+    "scripting",
+    "alarms",
+    "notifications",
+    "identity",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "https://api.notion.com/*",
+    "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*",
+    "https://api.cerebras.ai/*",
+    "https://api.mistral.ai/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://integrate.api.nvidia.com/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
+    "https://*.office.com/*",
+    "https://*.office365.com/*",
+    "https://outlook.live.com/*",
+    "https://*.atlassian.net/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://teams.microsoft.com/*",
+        "https://teams.live.com/*",
+        "https://*.office.com/*",
+        "https://*.office365.com/*",
+        "https://outlook.live.com/*",
+        "https://*.atlassian.net/*"
+      ],
+      "js": ["src/content/capture-pill.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "commands": {
+    "capture-to-notion": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "Capture selection or page to Notion"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.ts",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "Open PO Executive Coach"
+  }
+}

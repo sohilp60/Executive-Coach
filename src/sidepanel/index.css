@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets ── */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+html.dark,
+html.dark body {
+  background-color: #070b14;
+  color: #f8fafc;
+}
+
+html:not(.dark),
+html:not(.dark) body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+#root {
+  height: 100%;
+}
+
+/* ── Custom scrollbar (Webkit / Edge) ── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-surface-300;
+  transition: background-color 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surface-400;
+}
+
+/* Hide scrollbar for chat area until hover */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.surface.300') transparent;
+}
+
+.scrollbar-thin:hover {
+  scrollbar-color: theme('colors.surface.400') transparent;
+}
+
+/* ── Utility layers ── */
+@layer components {
+  /* Message bubble base */
+  .bubble-user {
+    @apply rounded-2xl rounded-br-md bg-coach-600 px-4 py-2.5 text-white;
+  }
+
+  .bubble-coach {
+    @apply rounded-2xl rounded-bl-md border border-surface-200 bg-white px-4 py-2.5 text-surface-800 shadow-sm;
+  }
+
+  /* Typing indicator dots */
+  .typing-dot {
+    @apply inline-block h-1.5 w-1.5 rounded-full bg-coach-400 animate-pulse-soft;
+  }
+
+  .typing-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .typing-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}
+
+/* ── Selection color ── */
+::selection {
+  @apply bg-coach-200 text-coach-900;
+}
