@@ -1,108 +1,77 @@
-# GitHub Release v0.2.0 Publisher & Extension Packaging
+# GitHub Release v0.2.0 for `sohilp60/Executive-Coach`
 
-Bump the Senior PO Executive Coach extension to version `0.2.0`, bundle a production-ready extension `.zip` archive with complete release notes and unpacked installation instructions, and add a direct in-app GitHub Release Publisher in Settings to publish `v0.2.0` to `Sohil56/Executive-Coach` using your GitHub Personal Access Token.
+This update retargets the **Senior PO Executive Coach** extension's GitHub Release publisher, auto-updater, and release documentation to **`https://github.com/sohilp60/Executive-Coach/releases`**, auto-migrating any previously saved `Sohil56/Executive-Coach` setting and providing both 1-click API publishing and a 1-click pre-filled GitHub web release launcher.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The decisions below reflect your confirmed choices from Phase 1 and govern how version `0.2.0` will be packaged and published to GitHub.
+> Because the AI Studio environment does not hold your personal GitHub credentials on the server, publishing a release to `https://github.com/sohilp60/Executive-Coach/releases` requires either **(A)** clicking **Publish v0.2.0 Release to GitHub** in Settings with your GitHub Personal Access Token, or **(B)** clicking **Open Pre-Filled GitHub Release Page** in Settings (which opens `https://github.com/sohilp60/Executive-Coach/releases/new?tag=v0.2.0&title=...&body=...` directly in your logged-in browser where you only need to drag-and-drop the `.zip` and click Publish).
 
-- **Confirmed Decision 1 — Direct In-App GitHub Release Publishing**: Add a dedicated **Publish Release to GitHub** workflow inside the Settings panel that uses your configured GitHub Personal Access Token to create the release via the GitHub Releases REST API and upload the compiled extension asset.
-- **Confirmed Decision 2 — Target Repository & Tag Format**: Pre-configure the release target to `Sohil56/Executive-Coach` on branch `main` with tag `v0.2.0` and release title `v0.2.0 — GitHub Auto-Updater, Full Backup & Restore, and Notion Status/Delta Sync`.
-- **Confirmed Decision 3 — Release Scope & Attached Assets**: Include the full `v0.2.0` changelog of features and fixes, step-by-step unpacked Chrome/Edge installation and upgrade instructions, and automatically attach the compiled `po-executive-coach-v0.2.0.zip` extension package to the GitHub Release.
+- **Confirmed Decision 1 — Target Repository**: Set default repository across the Auto-Updater, Release Publisher, and Release Notes to **`sohilp60/Executive-Coach`** (`https://github.com/sohilp60/Executive-Coach/releases`).
+- **Confirmed Decision 2 — Automatic Setting Migration**: Automatically migrate any cached `Sohil56/Executive-Coach` repository slug in local extension storage to `sohilp60/Executive-Coach` so the Settings UI immediately targets the right repository without manual typing.
+- **Confirmed Decision 3 — Dual 1-Click Release Workflow**: Provide both the direct GitHub REST API publisher (for token-based 1-click publishing + `.zip` upload) and a **1-Click Pre-Filled GitHub Release Web Button** (`releases/new?tag=v0.2.0&title=...&body=...`) that downloads `po-executive-coach-v0.2.0.zip` and opens your repository's New Release page with the tag, title, and changelog already filled in.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Upgrades the application version to `0.2.0` across all runtime manifests, generates a pre-built `po-executive-coach-v0.2.0.zip` extension distribution package, and equips the Settings view with a 1-click GitHub Release Publisher that creates tag `v0.2.0`, populates structured Markdown release notes, and uploads the compiled `.zip` binary asset directly to `Sohil56/Executive-Coach`.
-- **Target Audience / Persona**: Senior Product Owners maintaining and distributing the Executive Coach Chrome & Edge extension across personal and work machines.
-- **Key Value**: Eliminates manual release drafting and zip packaging—allowing you to publish a verified `v0.2.0` release (complete with binary `.zip` asset and release notes) directly from the extension Settings panel so that the built-in GitHub Auto-Updater immediately recognizes `v0.2.0` as the latest release.
+- **What It Does**: Points all release publishing, version checking, and documentation to `https://github.com/sohilp60/Executive-Coach/releases` for version `0.2.0`, and adds a zero-token fallback button that pre-populates the GitHub New Release form on `sohilp60/Executive-Coach` while downloading the compiled `po-executive-coach-v0.2.0.zip` package.
+- **Target Audience / Persona**: Product Owner maintaining and distributing the `sohilp60/Executive-Coach` Chrome/Edge extension.
+- **Key Value**: Eliminates repository slug mismatches and allows publishing `v0.2.0` to `https://github.com/sohilp60/Executive-Coach/releases` in seconds—either via API token or directly through your active GitHub browser session.
 
 ---
 
 ## 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Version `0.2.0` Verification**: Opening the Settings tab displays the updated `Installed: v0.2.0` badge in the Extension Updates section.
-  2. **Reviewing & Customizing Release Details**: Expanding the **Publish Release to GitHub (`v0.2.0`)** panel reveals pre-filled fields for:
-     - **Tag Name**: `v0.2.0` (targeting `Sohil56/Executive-Coach` on `main`)
-     - **Release Title**: `v0.2.0 — GitHub Auto-Updater, Full Backup & Restore, and Notion Status/Delta Sync`
-     - **Release Notes (Markdown)**: Pre-populated with a comprehensive changelog of all `v0.2.0` features, architectural improvements, and Chrome/Edge unpacked installation & upgrade steps (with a "Reset to Default v0.2.0 Notes" button).
-     - **Release Asset Attachment**: Toggle to automatically attach the bundled `po-executive-coach-v0.2.0.zip` production build (plus an option to download the `.zip` locally at any time).
-  3. **Publishing to GitHub**: Clicking **Publish v0.2.0 Release to GitHub** validates that a GitHub Personal Access Token (with `repo` or `contents:write` permission) is entered, creates (or updates if `v0.2.0` already exists) the GitHub Release on `Sohil56/Executive-Coach`, uploads `po-executive-coach-v0.2.0.zip` as a downloadable release asset, and displays a confirmation banner with a direct link to the live GitHub Release page.
-
+  1. **Automatic Repo Retargeting**: Opening **Settings** immediately displays `sohilp60/Executive-Coach` in the **Extension Updates & GitHub Release Publisher** card at the top of the panel.
+  2. **1-Click Pre-Filled GitHub Web Release (No Token Needed)**: Clicking **Create Release on GitHub.com (Pre-Filled)** simultaneously downloads `po-executive-coach-v0.2.0.zip` and opens `https://github.com/sohilp60/Executive-Coach/releases/new` with `tag=v0.2.0`, the release title, and the full markdown changelog pre-populated.
+  3. **1-Click API Release Publisher (With GitHub Token)**: Pasting a GitHub Personal Access Token (`repo` or `Contents: Read & Write` scope) and clicking **Publish v0.2.0 Release to GitHub** creates the `v0.2.0` tag and release via the GitHub REST API and uploads `po-executive-coach-v0.2.0.zip` automatically.
 - **Visual Identity & Theme**:
-  - *Aesthetic Direction*: High-contrast utilitarian SaaS console matching the existing Executive Coach sidepanel design system.
-  - *Color Palette & Mood*: Neutral slate/navy surfaces (`bg-white dark:bg-navy-900`), crisp hairline borders (`border-slate-300 dark:border-navy-700`), primary indigo action controls (`bg-indigo-600 hover:bg-indigo-700`), and semantic emerald/amber/crimson status banners.
-  - *Typography & Hierarchy*: Clean sans-serif UI labels paired with monospace tabular numerals (`font-mono tabular-nums`) for version tags (`v0.2.0`), asset file sizes, and timestamps.
-  - *Component Styling & Layout*: Single-elevation card layout integrated seamlessly into the **Extension Updates (GitHub Release Auto-Updater)** section of Settings, avoiding nested card clutter.
-
-- **Interactive Feedback & Motion**:
-  - Multi-stage progress indicator during release creation (`Creating release tag v0.2.0...` → `Uploading po-executive-coach-v0.2.0.zip asset...` → `Published v0.2.0!`).
-  - Inline validation if the GitHub Personal Access Token is missing or lacks write permissions, explaining the exact token scope required (`repo` / `Contents: Read and write`).
+  - *Aesthetic Direction*: Utilitarian SaaS developer console with single-elevation cards and crisp 1px structural borders.
+  - *Color Palette & Mood*: Obsidian dark (`#0F172A`) and high-contrast light (`#FFFFFF`) surfaces with indigo (`#4F46E5`) primary actions and emerald (`#16A34A`) release confirmation states.
+  - *Typography & Hierarchy*: Clean sans-serif UI labels paired with monospace tabular numerals (`font-mono tabular-nums`) for version tags (`v0.2.0`), repository slugs (`sohilp60/Executive-Coach`), and timestamps.
+  - *Component Styling & Layout*: Single-line action buttons (`whitespace-nowrap shrink-0`) placed at the top of the Settings view for zero-scroll access.
+- **Interactive Feedback & Motion**: Instant loading spinners during API calls, clear status banners with direct links to `https://github.com/sohilp60/Executive-Coach/releases`, and automatic zip download triggers.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Two-Step GitHub REST + Asset Upload Flow with Idempotent Tag Handling**
-  - *Chosen Approach*: When publishing `v0.2.0`, first call `POST /repos/{owner}/{repo}/releases` (and if `v0.2.0` already exists with HTTP 422, automatically look up the existing `v0.2.0` release by tag and update it via `PATCH /repos/{owner}/{repo}/releases/{release_id}`). Then upload the binary `.zip` package to the release's `upload_url` (`https://uploads.github.com/repos/{owner}/{repo}/releases/{id}/assets?name=po-executive-coach-v0.2.0.zip`).
-  - *Why*: Ensures publishing never fails due to a duplicate tag conflict and guarantees that the compiled `.zip` asset is attached so `checkGitHubForUpdates` picks up the `.zip` asset URL immediately.
-  - *Alternatives Considered*: Creating only a text release without an attached `.zip` asset (rejected because the user requested attaching the compiled extension `.zip` asset for installation).
-
-- **Decision 2: Bundling Pre-Compiled `po-executive-coach-v0.2.0.zip` for Zero-Friction Upload**
-  - *Chosen Approach*: Build the `0.2.0` extension bundle during packaging and serve `po-executive-coach-v0.2.0.zip` as a static asset so the browser/extension can fetch its binary `ArrayBuffer` and upload it directly to GitHub Releases with zero manual file selection required (while also allowing local download or custom `.zip` selection).
-  - *Why*: Lets the user publish the complete release and binary asset in a single click right from Settings.
+- **Decision 1: Auto-Migrate Cached `Sohil56/Executive-Coach` Storage State**
+  - *Chosen Approach*: When loading `po_github_update_config` from `chrome.storage.local`, automatically replace `Sohil56/Executive-Coach` with `sohilp60/Executive-Coach`.
+  - *Why*: Ensures existing browser storage from earlier sessions doesn't keep pointing at the old repository username.
+  - *Alternatives Considered*: Requiring the user to manually edit the text input (error-prone and easy to miss).
+- **Decision 2: Add Pre-Filled GitHub Web Release Launcher Alongside API Publisher**
+  - *Chosen Approach*: Construct a URL-encoded `https://github.com/sohilp60/Executive-Coach/releases/new?tag=v0.2.0&title=...&body=...` action button that also triggers the local download of `po-executive-coach-v0.2.0.zip`.
+  - *Why*: Even without generating a GitHub Personal Access Token, the user can publish the release in two clicks using their existing logged-in GitHub browser session.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
 - **Architecture & Component Diagram**:
-
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│                     Settings View (ProviderSettings)                      │
-│                                                                           │
-│  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │        Extension Updates & GitHub Release Publisher (v0.2.0)        │  │
-│  │  • Installed Badge: v0.2.0                                          │  │
-│  │  • Repo: Sohil56/Executive-Coach | Branch: main | Token Input       │  │
-│  │  • Actions: [Check GitHub for Updates] [Publish v0.2.0 Release]     │  │
-│  │  • Release Composer: Tag (v0.2.0), Title, Markdown Changelog,       │  │
-│  │    Auto-Attach Compiled Asset (po-executive-coach-v0.2.0.zip)       │  │
-│  └──────────────────┬───────────────────────────────────┬──────────────┘  │
-└─────────────────────┼───────────────────────────────────┼─────────────────┘
-                      │                                   │
-        CHECK_GITHUB_UPDATE                 PUBLISH_GITHUB_RELEASE
-                      ▼                                   ▼
-┌─────────────────────────────────────┐ ┌───────────────────────────────────┐
-│   GitHub Auto-Updater Service       │ │   GitHub Release Publisher        │
-│  • Compares local v0.2.0 vs remote  │ │  1. Fetch bundled v0.2.0 .zip     │
-│  • Inspects /releases/latest        │ │  2. POST/PATCH /repos/.../releases│
-│  • Triggers auto-download / reload  │ │  3. POST binary to uploads.github │
-└─────────────────────────────────────┘ └───────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                Settings UI (Extension Updates & Publisher)              │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │ Repo Slug: sohilp60/Executive-Coach  (Auto-migrated from storage) │  │
+│  ├─────────────────────────────────┬─────────────────────────────────┤  │
+│  │ Option A: API Publisher         │ Option B: Pre-Filled Web Launch │  │
+│  │ [Publish v0.2.0 via Token]      │ [Open GitHub Release + Get Zip] │  │
+│  └────────────────┬────────────────┴────────────────┬────────────────┘  │
+└───────────────────┼─────────────────────────────────┼───────────────────┘
+                    ▼                                 ▼
+┌───────────────────────────────────────┐ ┌───────────────────────────────┐
+│ Service Worker / GitHub Updater Core  │ │ Browser Tab + Zip Download    │
+│ • POST /repos/sohilp60/.../releases   │ │ • Downloads v0.2.0 .zip asset │
+│ • POST uploads.github.com/.../assets  │ │ • Opens github.com/sohilp60/  │
+│ • Returns live release & asset URLs   │ │   Executive-Coach/releases/new│
+└───────────────────────────────────────┘ └───────────────────────────────┘
 ```
-
 - **Data Model & State**:
-  - `ReleasePublishPayload`:
-    - `repoSlug`: `'Sohil56/Executive-Coach'`
-    - `tagName`: `'v0.2.0'`
-    - `targetCommitish`: `'main'`
-    - `releaseName`: `'v0.2.0 — GitHub Auto-Updater, Full Backup & Restore, and Notion Status/Delta Sync'`
-    - `body`: Complete Markdown release notes covering all `v0.2.0` features, bug fixes, and Chrome/Edge unpacked installation & update instructions.
-    - `draft`: `false`, `prerelease`: `false`
-    - `attachCompiledZip`: `boolean` (defaults to `true`)
-  - `ReleasePublishResult`:
-    - `ok`: `boolean`
-    - `htmlUrl`: Published GitHub release URL
-    - `tagName`: `'v0.2.0'`
-    - `assetUploaded`: `boolean`
-    - `assetDownloadUrl`: Direct browser download URL for `po-executive-coach-v0.2.0.zip`
-    - `error`: Optional error string
-
+  - `DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug`: Updated to `'sohilp60/Executive-Coach'`.
+  - Storage migration hook: Normalizes any stored `Sohil56/Executive-Coach` value to `sohilp60/Executive-Coach` on initialization and persists it.
 - **Interactive Component & State Mapping**:
-  - **Manifest & Version Synchronization**: Version updated to `0.2.0` across extension manifest, package metadata, and runtime version fallback.
-  - **Release Publisher Panel Toggle & Editor**: Users can inspect or edit the `v0.2.0` tag, title, and Markdown release notes, reset to the default `v0.2.0` changelog template, download the compiled `po-executive-coach-v0.2.0.zip` locally, or click **Publish v0.2.0 Release to GitHub**.
-  - **Host Permissions**: Include `https://uploads.github.com/*` alongside `https://api.github.com/*` so binary `.zip` release assets upload cleanly from both the extension service worker and web preview.
+  - **Publish via Token Button**: Validates `repoSlug` (`sohilp60/Executive-Coach`) and `githubToken`, dispatches `PUBLISH_GITHUB_RELEASE`, uploads `po-executive-coach-v0.2.0.zip`, and renders a direct link to the live release.
+  - **Open Pre-Filled GitHub Release Button**: Triggers download of `/po-executive-coach-v0.2.0.zip` and opens `https://github.com/sohilp60/Executive-Coach/releases/new` pre-populated with `tag=v0.2.0`, `title`, and `body`.

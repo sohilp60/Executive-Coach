@@ -6,7 +6,7 @@ import type {
 } from '../../types/schema';
 
 export const DEFAULT_GITHUB_UPDATE_CONFIG: GitHubUpdateConfig = {
-  repoSlug: 'Sohil56/Executive-Coach',
+  repoSlug: 'sohilp60/Executive-Coach',
   branch: 'main',
   githubToken: '',
   autoUpdate: true,
@@ -22,9 +22,9 @@ export const DEFAULT_V020_RELEASE_NOTES = `## Senior PO Executive Coach — Rele
 ### Highlights & New Capabilities
 
 1. **GitHub Release Checker & 1-Click Auto-Updater**
-   - Added a dedicated **Extension Updates** module in Settings that queries GitHub Releases (\`Sohil56/Executive-Coach\`) and branch manifests for newer semantic versions.
+   - Added a dedicated **Extension Updates** module in Settings that queries GitHub Releases (\`sohilp60/Executive-Coach\`) and branch manifests for newer semantic versions.
    - Automatically triggers native browser extension reload when staged or downloads the latest release package (\`.zip\` / \`.crx\`) with release notes and changelog preview.
-   - Includes a built-in **GitHub Release Publisher** in Settings to publish new releases and compiled \`.zip\` bundles directly using a GitHub Personal Access Token.
+   - Includes a built-in **GitHub Release Publisher** in Settings to publish new releases and compiled \`.zip\` bundles directly to \`https://github.com/sohilp60/Executive-Coach/releases\`.
 
 2. **Full Configuration & PO Memory Backup (Export / Import \`.json\`)**
    - Export all LLM provider configurations, custom endpoints, router fallback priorities, Notion settings, status filters, synced tasks, chat history, and the PO Memory Vault (profile, stakeholders, product rules, daily commitments) into a portable \`.json\` backup file.
@@ -49,7 +49,7 @@ export const DEFAULT_V020_RELEASE_NOTES = `## Senior PO Executive Coach — Rele
 
 #### Option A: Updating an Existing Installation
 1. Before updating (or if doing a clean install), open **Settings → Backup & Restore** and click **Export Full Backup (.json)** to save a snapshot of your keys and PO Memory.
-2. Download **\`po-executive-coach-v0.2.0.zip\`** from the **Assets** section below.
+2. Download **\`po-executive-coach-v0.2.0.zip\`** from the **Assets** section below (\`https://github.com/sohilp60/Executive-Coach/releases\`).
 3. Extract the \`.zip\` archive over your existing unpacked extension folder (or into a new folder).
 4. In **Settings → Extension Updates**, click **Reload Extension** (or visit \`chrome://extensions\` / \`edge://extensions\` and click the **Reload** icon on *Senior PO Executive Coach*).
 5. If you extracted into a new folder on a fresh profile, open **Settings → Backup & Restore** and click **Import Backup File (.json)** to restore all settings in one click.
@@ -77,6 +77,7 @@ export function getCurrentExtensionVersion(): string {
 
 /**
  * Normalizes a GitHub repository input (URL or owner/repo) into "owner/repo".
+ * Automatically migrates legacy "Sohil56/Executive-Coach" to "sohilp60/Executive-Coach".
  */
 export function normalizeRepoSlug(input: string): string {
   if (!input) return DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug;
@@ -87,9 +88,43 @@ export function normalizeRepoSlug(input: string): string {
   cleaned = cleaned.replace(/\/+$/, '');
   const parts = cleaned.split('/').filter(Boolean);
   if (parts.length >= 2) {
-    return `${parts[0]}/${parts[1]}`;
+    const slug = `${parts[0]}/${parts[1]}`;
+    if (slug.toLowerCase() === 'sohil56/executive-coach') {
+      return 'sohilp60/Executive-Coach';
+    }
+    return slug;
+  }
+  if (cleaned.toLowerCase() === 'sohil56/executive-coach') {
+    return 'sohilp60/Executive-Coach';
   }
   return cleaned || DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug;
+}
+
+/**
+ * Builds a pre-filled GitHub New Release URL for https://github.com/sohilp60/Executive-Coach/releases/new
+ * so the user can also publish the release directly in their browser with 0 token setup.
+ */
+export function buildGitHubWebReleaseUrl(params?: {
+  repoSlug?: string;
+  tagName?: string;
+  targetCommitish?: string;
+  releaseName?: string;
+  body?: string;
+}): string {
+  const slug = normalizeRepoSlug(params?.repoSlug || DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug);
+  const tag = (params?.tagName || DEFAULT_V020_TAG).trim();
+  const target = (params?.targetCommitish || 'main').trim() || 'main';
+  const title = (params?.releaseName || DEFAULT_V020_RELEASE_TITLE).trim();
+  const body = params?.body || DEFAULT_V020_RELEASE_NOTES;
+
+  const query = new URLSearchParams({
+    tag,
+    target,
+    title,
+    body,
+  });
+
+  return `https://github.com/${slug}/releases/new?${query.toString()}`;
 }
 
 /**
@@ -151,7 +186,7 @@ export async function checkGitHubForUpdates(
       latestVersion: currentVersion,
       hasUpdate: false,
       source: 'github-release',
-      error: 'Invalid GitHub repository format. Use "owner/repo" (e.g., Sohil56/Executive-Coach).',
+      error: 'Invalid GitHub repository format. Use "owner/repo" (e.g., sohilp60/Executive-Coach).',
     };
   }
 
@@ -377,7 +412,7 @@ export async function checkGitHubForUpdates(
 }
 
 /**
- * Publishes or updates a GitHub Release (e.g., v0.2.0 on Sohil56/Executive-Coach)
+ * Publishes or updates a GitHub Release (e.g., v0.2.0 on sohilp60/Executive-Coach)
  * and optionally attaches the compiled extension .zip package to the release.
  */
 export async function publishGitHubRelease(
@@ -395,7 +430,7 @@ export async function publishGitHubRelease(
     return {
       ok: false,
       tagName,
-      error: 'Invalid GitHub repository format. Expected "owner/repo" (e.g., Sohil56/Executive-Coach).',
+      error: 'Invalid GitHub repository format. Expected "owner/repo" (e.g., sohilp60/Executive-Coach).',
     };
   }
 

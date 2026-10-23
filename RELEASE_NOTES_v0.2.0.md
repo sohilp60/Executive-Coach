@@ -1,6 +1,6 @@
 # Senior PO Executive Coach — Release v0.2.0
 
-**Repository:** `Sohil56/Executive-Coach`  
+**Repository:** `sohilp60/Executive-Coach` (`https://github.com/sohilp60/Executive-Coach/releases`)  
 **Tag:** `v0.2.0`  
 **Release Title:** `v0.2.0 — GitHub Auto-Updater, Full Backup & Restore, and Notion Status/Delta Sync`
 
@@ -9,9 +9,9 @@
 ## Highlights & New Capabilities
 
 1. **GitHub Release Checker & 1-Click Auto-Updater**
-   - Added a dedicated **Extension Updates** module in Settings that queries GitHub Releases (`Sohil56/Executive-Coach`) and branch manifests for newer semantic versions.
+   - Added a dedicated **Extension Updates** module in Settings that queries GitHub Releases (`sohilp60/Executive-Coach`) and branch manifests for newer semantic versions.
    - Automatically triggers native browser extension reload when staged or downloads the latest release package (`.zip` / `.crx`) with release notes and changelog preview.
-   - Includes a built-in **GitHub Release Publisher** in Settings to publish new releases and compiled `.zip` bundles directly using a GitHub Personal Access Token.
+   - Includes a built-in **GitHub Release Publisher** in Settings to publish new releases and compiled `.zip` bundles directly to `https://github.com/sohilp60/Executive-Coach/releases`.
 
 2. **Full Configuration & PO Memory Backup (Export / Import `.json`)**
    - Export all LLM provider configurations, custom endpoints, router fallback priorities, Notion settings, status filters, synced tasks, chat history, and the PO Memory Vault (profile, stakeholders, product rules, daily commitments) into a portable `.json` backup file.
@@ -36,7 +36,7 @@
 
 ### Option A: Updating an Existing Installation
 1. Before updating (or if doing a clean install), open **Settings → Backup & Restore** and click **Export Full Backup (.json)** to save a snapshot of your keys and PO Memory.
-2. Download **`po-executive-coach-v0.2.0.zip`** from the **Assets** section of the GitHub Release.
+2. Download **`po-executive-coach-v0.2.0.zip`** from the **Assets** section of `https://github.com/sohilp60/Executive-Coach/releases`.
 3. Extract the `.zip` archive over your existing unpacked extension folder (or into a new folder).
 4. In **Settings → Extension Updates**, click **Reload Extension** (or visit `chrome://extensions` / `edge://extensions` and click the **Reload** icon on *Senior PO Executive Coach*).
 5. If you extracted into a new folder on a fresh profile, open **Settings → Backup & Restore** and click **Import Backup File (.json)** to restore all settings in one click.
@@ -46,3 +46,4 @@
 2. Open `chrome://extensions` (Chrome) or `edge://extensions` (Edge).
 3. Enable **Developer mode** in the top-right corner.
 4. Click **Load unpacked** and select the extracted folder containing `manifest.json`.
+

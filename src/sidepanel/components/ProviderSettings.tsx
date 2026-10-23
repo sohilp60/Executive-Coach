@@ -50,6 +50,7 @@ import {
   DEFAULT_V020_ASSET_NAME,
   getCurrentExtensionVersion,
   normalizeRepoSlug,
+  buildGitHubWebReleaseUrl,
   triggerAutomaticUpdateDownload,
 } from '../../core/updater/github-updater';
 import {
@@ -345,10 +346,17 @@ export default function ProviderSettings({
           setGdriveClientId(result.po_gdrive_client_id as string);
         }
         if (result.po_github_update_config) {
-          setGithubConfig({
+          const loadedCfg = result.po_github_update_config as GitHubUpdateConfig;
+          const migratedSlug = normalizeRepoSlug(loadedCfg.repoSlug || DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug);
+          const migratedCfg: GitHubUpdateConfig = {
             ...DEFAULT_GITHUB_UPDATE_CONFIG,
-            ...(result.po_github_update_config as GitHubUpdateConfig),
-          });
+            ...loadedCfg,
+            repoSlug: migratedSlug,
+          };
+          setGithubConfig(migratedCfg);
+          if (loadedCfg.repoSlug !== migratedSlug) {
+            chrome.storage.local.set({ po_github_update_config: migratedCfg });
+          }
         }
       }
     );
@@ -994,7 +1002,7 @@ export default function ProviderSettings({
       setPublishFeedback({
         type: 'error',
         message:
-          'Please enter your GitHub Personal Access Token above (with "repo" or "Contents: Read & write" permission) so the extension can create release v0.2.0 on Sohil56/Executive-Coach.',
+          'To publish directly via the GitHub API, paste your GitHub Personal Access Token above (with "repo" or "Contents: Read & write" permission) — OR click "Open Pre-Filled Release on GitHub.com (+ Download .zip)" right next to this button to publish in 1 click without a token.',
       });
       return;
     }
@@ -1578,7 +1586,7 @@ export default function ProviderSettings({
                   onChange={(e) =>
                     setGithubConfig((prev) => ({ ...prev, repoSlug: e.target.value }))
                   }
-                  placeholder="owner/repo (e.g. Sohil56/Executive-Coach)"
+                  placeholder="owner/repo (e.g. sohilp60/Executive-Coach)"
                   className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono"
                 />
               </div>
@@ -1606,7 +1614,7 @@ export default function ProviderSettings({
                 onChange={(e) =>
                   setGithubConfig((prev) => ({ ...prev, githubToken: e.target.value }))
                 }
-                placeholder="GitHub Personal Access Token (paste token here to publish v0.2.0 release)"
+                placeholder="GitHub Personal Access Token (optional if using Pre-Filled GitHub Web Launcher below)"
                 className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
               />
             </div>
@@ -1628,7 +1636,7 @@ export default function ProviderSettings({
                 type="button"
                 onClick={handleCheckForUpdates}
                 disabled={isCheckingUpdate}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
               >
                 {isCheckingUpdate ? (
                   <Loader2 size={13} className="animate-spin" />
@@ -1642,7 +1650,7 @@ export default function ProviderSettings({
                 <button
                   type="button"
                   onClick={() => triggerAutomaticUpdateDownload(updateResult)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs whitespace-nowrap shrink-0"
                 >
                   <Download size={13} />
                   Download v{updateResult.latestVersion}
@@ -1662,12 +1670,22 @@ export default function ProviderSettings({
                     window.location.reload();
                   }
                 }}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors whitespace-nowrap shrink-0"
                 title="Reload extension runtime to apply extracted updates"
               >
                 <RotateCw size={12} />
                 Reload Extension
               </button>
+
+              <a
+                href={`https://github.com/${normalizeRepoSlug(githubConfig.repoSlug || 'sohilp60/Executive-Coach')}/releases`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800 transition-colors whitespace-nowrap shrink-0"
+              >
+                <span>View Releases Page</span>
+                <ExternalLink size={12} />
+              </a>
             </div>
 
             {updateFeedback && (
@@ -1737,14 +1755,21 @@ export default function ProviderSettings({
 
             {/* ── Publish Release v0.2.0 to GitHub ── */}
             <div className="pt-3 mt-2 border-t border-slate-200 dark:border-navy-800 space-y-2.5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-xs font-bold text-slate-900 dark:text-white">
-                    Publish Release v0.2.0 to GitHub
+                    Publish Release v0.2.0 to GitHub ({normalizeRepoSlug(githubConfig.repoSlug || 'sohilp60/Executive-Coach')})
                   </p>
                   <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Creates tag <code className="font-mono">v0.2.0</code> on{' '}
-                    <code className="font-mono">{githubConfig.repoSlug || 'Sohil56/Executive-Coach'}</code> with full changelog &amp; compiled <code className="font-mono">.zip</code> asset.
+                    Target:{' '}
+                    <a
+                      href={`https://github.com/${normalizeRepoSlug(githubConfig.repoSlug || 'sohilp60/Executive-Coach')}/releases`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      https://github.com/{normalizeRepoSlug(githubConfig.repoSlug || 'sohilp60/Executive-Coach')}/releases
+                    </a>
                   </p>
                 </div>
                 <button
@@ -1821,6 +1846,34 @@ export default function ProviderSettings({
                   </label>
 
                   <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {/* Option 1: Zero-Token Pre-Filled GitHub Web Launcher + Zip Download */}
+                    <a
+                      href={buildGitHubWebReleaseUrl({
+                        repoSlug: githubConfig.repoSlug || 'sohilp60/Executive-Coach',
+                        tagName: releaseTag || DEFAULT_V020_TAG,
+                        targetCommitish: githubConfig.branch || 'main',
+                        releaseName: releaseTitle || DEFAULT_V020_RELEASE_TITLE,
+                        body: releaseNotes || DEFAULT_V020_RELEASE_NOTES,
+                      })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        if (attachCompiledZip) {
+                          handleDownloadCompiledZip();
+                        }
+                        setPublishFeedback({
+                          type: 'success',
+                          message: `Opened pre-filled v0.2.0 release page on github.com/${normalizeRepoSlug(githubConfig.repoSlug || 'sohilp60/Executive-Coach')}/releases/new and downloaded ${DEFAULT_V020_ASSET_NAME}! Drag the .zip onto the GitHub page and click "Publish release".`,
+                        });
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs whitespace-nowrap shrink-0"
+                      title="Opens github.com/sohilp60/Executive-Coach/releases/new with v0.2.0 pre-filled and downloads the compiled .zip asset"
+                    >
+                      <ExternalLink size={13} />
+                      <span>Open Pre-Filled Release on GitHub.com (+ Download .zip)</span>
+                    </a>
+
+                    {/* Option 2: Direct API Publish using GitHub Token */}
                     <button
                       type="button"
                       onClick={handlePublishGitHubRelease}
@@ -1834,7 +1887,7 @@ export default function ProviderSettings({
                       )}
                       {isPublishingRelease
                         ? `Publishing ${releaseTag || 'v0.2.0'}...`
-                        : `Publish ${releaseTag || 'v0.2.0'} Release to GitHub`}
+                        : `API Publish ${releaseTag || 'v0.2.0'} (Uses Token)`}
                     </button>
 
                     <button
@@ -1844,7 +1897,7 @@ export default function ProviderSettings({
                       title="Download compiled v0.2.0 extension zip archive locally"
                     >
                       <Download size={13} />
-                      Download Compiled v0.2.0 (.zip)
+                      Download v0.2.0 (.zip)
                     </button>
                   </div>
 
