@@ -1554,6 +1554,442 @@ export default function ProviderSettings({
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+        {/* ── GitHub Extension Updates & v0.2.0 Release Publisher ─────────────── */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold flex items-center gap-1.5">
+              <Sparkles size={14} className="text-indigo-500" />
+              Extension Updates &amp; GitHub Release Publisher
+            </h2>
+            <span className="text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              Installed: v{getCurrentExtensionVersion()}
+            </span>
+          </div>
+
+          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-2.5 shadow-sm">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2 relative">
+                <Globe
+                  size={12}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+                />
+                <input
+                  value={githubConfig.repoSlug}
+                  onChange={(e) =>
+                    setGithubConfig((prev) => ({ ...prev, repoSlug: e.target.value }))
+                  }
+                  placeholder="owner/repo (e.g. Sohil56/Executive-Coach)"
+                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono"
+                />
+              </div>
+              <div>
+                <input
+                  value={githubConfig.branch}
+                  onChange={(e) =>
+                    setGithubConfig((prev) => ({ ...prev, branch: e.target.value }))
+                  }
+                  placeholder="Branch (main)"
+                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono text-center"
+                  title="Default branch to inspect if no GitHub Release is published"
+                />
+              </div>
+            </div>
+
+            <div className="relative">
+              <Key
+                size={12}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+              />
+              <input
+                type="password"
+                value={githubConfig.githubToken || ''}
+                onChange={(e) =>
+                  setGithubConfig((prev) => ({ ...prev, githubToken: e.target.value }))
+                }
+                placeholder="GitHub Personal Access Token (paste token here to publish v0.2.0 release)"
+                className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={githubConfig.autoUpdate}
+                onChange={(e) =>
+                  setGithubConfig((prev) => ({ ...prev, autoUpdate: e.target.checked }))
+                }
+                className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>Automatically download &amp; trigger update when a newer release is found</span>
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCheckForUpdates}
+                disabled={isCheckingUpdate}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
+              >
+                {isCheckingUpdate ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={13} />
+                )}
+                Check GitHub for Updates
+              </button>
+
+              {updateResult?.hasUpdate && updateResult.downloadUrl && (
+                <button
+                  type="button"
+                  onClick={() => triggerAutomaticUpdateDownload(updateResult)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs"
+                >
+                  <Download size={13} />
+                  Download v{updateResult.latestVersion}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    if (typeof chrome !== 'undefined' && chrome.runtime?.reload) {
+                      chrome.runtime.reload();
+                    } else {
+                      window.location.reload();
+                    }
+                  } catch {
+                    window.location.reload();
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors"
+                title="Reload extension runtime to apply extracted updates"
+              >
+                <RotateCw size={12} />
+                Reload Extension
+              </button>
+            </div>
+
+            {updateFeedback && (
+              <div
+                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                  updateFeedback.type === 'success'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    : updateFeedback.type === 'warning'
+                      ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                      : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                }`}
+              >
+                {updateFeedback.type === 'success' ? (
+                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                ) : (
+                  <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                )}
+                <span className="leading-snug">{updateFeedback.message}</span>
+              </div>
+            )}
+
+            {updateResult && updateResult.ok && (
+              <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-navy-950 border border-slate-300 dark:border-navy-800 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {updateResult.releaseTitle || `Latest: v${updateResult.latestVersion}`}
+                  </span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded ${
+                      updateResult.hasUpdate
+                        ? 'bg-amber-200 dark:bg-amber-900/70 text-amber-950 dark:text-amber-200'
+                        : 'bg-emerald-200 dark:bg-emerald-900/70 text-emerald-950 dark:text-emerald-200'
+                    }`}
+                  >
+                    {updateResult.hasUpdate
+                      ? `Update Available: v${updateResult.latestVersion}`
+                      : `Up to Date (v${updateResult.currentVersion})`}
+                  </span>
+                </div>
+                {updateResult.releaseNotes && (
+                  <p className="text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap line-clamp-4">
+                    {updateResult.releaseNotes}
+                  </p>
+                )}
+                {updateResult.htmlUrl && (
+                  <a
+                    href={updateResult.htmlUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline pt-0.5"
+                  >
+                    <span>View Release on GitHub</span>
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {githubConfig.lastCheckedISO && (
+              <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                Last checked: {new Date(githubConfig.lastCheckedISO).toLocaleString()}
+                {githubConfig.latestAvailableVersion
+                  ? ` · Latest remote version: v${githubConfig.latestAvailableVersion}`
+                  : ''}
+              </p>
+            )}
+
+            {/* ── Publish Release v0.2.0 to GitHub ── */}
+            <div className="pt-3 mt-2 border-t border-slate-200 dark:border-navy-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">
+                    Publish Release v0.2.0 to GitHub
+                  </p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Creates tag <code className="font-mono">v0.2.0</code> on{' '}
+                    <code className="font-mono">{githubConfig.repoSlug || 'Sohil56/Executive-Coach'}</code> with full changelog &amp; compiled <code className="font-mono">.zip</code> asset.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReleasePublisher((prev) => !prev)}
+                  className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-navy-700 hover:border-indigo-400 transition-colors whitespace-nowrap shrink-0"
+                >
+                  {showReleasePublisher ? 'Hide Publisher' : 'Configure & Publish'}
+                </button>
+              </div>
+
+              {showReleasePublisher && (
+                <div className="space-y-2.5 pt-1">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Version Tag
+                      </label>
+                      <input
+                        value={releaseTag}
+                        onChange={(e) => setReleaseTag(e.target.value)}
+                        placeholder="v0.2.0"
+                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono tabular-nums focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Release Title
+                      </label>
+                      <input
+                        value={releaseTitle}
+                        onChange={(e) => setReleaseTitle(e.target.value)}
+                        placeholder="v0.2.0 — Release Title"
+                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-medium focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                        Release Notes &amp; Upgrade Instructions (Markdown)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReleaseTag(DEFAULT_V020_TAG);
+                          setReleaseTitle(DEFAULT_V020_RELEASE_TITLE);
+                          setReleaseNotes(DEFAULT_V020_RELEASE_NOTES);
+                        }}
+                        className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                      >
+                        Reset to v0.2.0 Template
+                      </button>
+                    </div>
+                    <textarea
+                      rows={7}
+                      value={releaseNotes}
+                      onChange={(e) => setReleaseNotes(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg p-2.5 text-[11px] font-mono text-slate-900 dark:text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={attachCompiledZip}
+                      onChange={(e) => setAttachCompiledZip(e.target.checked)}
+                      className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>
+                      Attach compiled extension archive (<code className="font-mono">{DEFAULT_V020_ASSET_NAME}</code>) to GitHub Release
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handlePublishGitHubRelease}
+                      disabled={isPublishingRelease}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
+                    >
+                      {isPublishingRelease ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Upload size={13} />
+                      )}
+                      {isPublishingRelease
+                        ? `Publishing ${releaseTag || 'v0.2.0'}...`
+                        : `Publish ${releaseTag || 'v0.2.0'} Release to GitHub`}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadCompiledZip}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors whitespace-nowrap shrink-0"
+                      title="Download compiled v0.2.0 extension zip archive locally"
+                    >
+                      <Download size={13} />
+                      Download Compiled v0.2.0 (.zip)
+                    </button>
+                  </div>
+
+                  {publishFeedback && (
+                    <div
+                      className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                        publishFeedback.type === 'success'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                          : publishFeedback.type === 'warning'
+                            ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                            : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                      }`}
+                    >
+                      {publishFeedback.type === 'success' ? (
+                        <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                      ) : (
+                        <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-1">
+                        <p className="leading-snug">{publishFeedback.message}</p>
+                        {publishResult?.htmlUrl && (
+                          <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                            <a
+                              href={publishResult.htmlUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-bold underline"
+                            >
+                              <span>Open {publishResult.tagName} on GitHub</span>
+                              <ExternalLink size={11} />
+                            </a>
+                            {publishResult.assetDownloadUrl && (
+                              <a
+                                href={publishResult.assetDownloadUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold underline"
+                              >
+                                <span>Direct Zip Asset Link</span>
+                                <Download size={11} />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Backup & Restore (Export / Import All Settings & Memory) ── */}
+        <section>
+          <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold mb-2 flex items-center gap-1.5">
+            <FileJson size={14} className="text-indigo-500" />
+            Backup &amp; Restore (Export / Import)
+          </h2>
+          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-3 shadow-sm">
+            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+              Export all your LLM provider configurations, API keys, Notion settings, status filters, and PO Memory Vault into a single <code className="font-mono bg-slate-200 dark:bg-navy-800 px-1 rounded">.json</code> file. Import it anytime on a fresh install to restore everything in one click.
+            </p>
+
+            {/* Export Options */}
+            <div className="space-y-1.5 pt-1">
+              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeCredentialsInExport}
+                  onChange={(e) => setIncludeCredentialsInExport(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Include API Keys &amp; Tokens (recommended for personal fresh-install backups)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeTasksInExport}
+                  onChange={(e) => setIncludeTasksInExport(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Include Synced Notion Tasks &amp; Coach Chat History</span>
+              </label>
+            </div>
+
+            {/* Export & Import Buttons */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                disabled={isExportingBackup}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
+              >
+                {isExportingBackup ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Download size={13} />
+                )}
+                Export Full Backup (.json)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImportingBackup}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors disabled:opacity-50"
+              >
+                {isImportingBackup ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Upload size={13} />
+                )}
+                Import Backup File (.json)
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleImportBackupFile}
+                className="hidden"
+              />
+            </div>
+
+            {backupFeedback && (
+              <div
+                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                  backupFeedback.type === 'success'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                }`}
+              >
+                {backupFeedback.type === 'success' ? (
+                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                ) : (
+                  <AlertCircle size={15} className="shrink-0 mt-0.5 text-red-700 dark:text-red-300" />
+                )}
+                <span className="leading-snug">{backupFeedback.message}</span>
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* ── Appearance & Contrast ───────────────── */}
         <section>
           <div className="flex items-center justify-between mb-2">
@@ -2113,442 +2549,6 @@ export default function ProviderSettings({
             <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
               Uses PKCE OAuth flow via <code className="bg-slate-200 dark:bg-navy-800 px-1 rounded text-slate-900 dark:text-white font-mono">chrome.identity.launchWebAuthFlow</code> — compatible with Chrome and Edge.
             </p>
-          </div>
-        </section>
-
-        {/* ── Backup & Restore (Export / Import All Settings & Memory) ── */}
-        <section>
-          <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold mb-2 flex items-center gap-1.5">
-            <FileJson size={14} className="text-indigo-500" />
-            Backup &amp; Restore (Export / Import)
-          </h2>
-          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-3 shadow-sm">
-            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
-              Export all your LLM provider configurations, API keys, Notion settings, status filters, and PO Memory Vault into a single <code className="font-mono bg-slate-200 dark:bg-navy-800 px-1 rounded">.json</code> file. Import it anytime on a fresh install to restore everything in one click.
-            </p>
-
-            {/* Export Options */}
-            <div className="space-y-1.5 pt-1">
-              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includeCredentialsInExport}
-                  onChange={(e) => setIncludeCredentialsInExport(e.target.checked)}
-                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>Include API Keys &amp; Tokens (recommended for personal fresh-install backups)</span>
-              </label>
-
-              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={includeTasksInExport}
-                  onChange={(e) => setIncludeTasksInExport(e.target.checked)}
-                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
-                />
-                <span>Include Synced Notion Tasks &amp; Coach Chat History</span>
-              </label>
-            </div>
-
-            {/* Export & Import Buttons */}
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleExportBackup}
-                disabled={isExportingBackup}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
-              >
-                {isExportingBackup ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Download size={13} />
-                )}
-                Export Full Backup (.json)
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isImportingBackup}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors disabled:opacity-50"
-              >
-                {isImportingBackup ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <Upload size={13} />
-                )}
-                Import Backup File (.json)
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json,application/json"
-                onChange={handleImportBackupFile}
-                className="hidden"
-              />
-            </div>
-
-            {backupFeedback && (
-              <div
-                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
-                  backupFeedback.type === 'success'
-                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                    : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
-                }`}
-              >
-                {backupFeedback.type === 'success' ? (
-                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
-                ) : (
-                  <AlertCircle size={15} className="shrink-0 mt-0.5 text-red-700 dark:text-red-300" />
-                )}
-                <span className="leading-snug">{backupFeedback.message}</span>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* ── GitHub Extension Updates & Auto-Updater ─────────────── */}
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold flex items-center gap-1.5">
-              <Sparkles size={14} className="text-indigo-500" />
-              Extension Updates (GitHub Release Auto-Updater)
-            </h2>
-            <span className="text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-              Installed: v{getCurrentExtensionVersion()}
-            </span>
-          </div>
-
-          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-2.5 shadow-sm">
-            <div className="grid grid-cols-3 gap-2">
-              <div className="col-span-2 relative">
-                <Globe
-                  size={12}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
-                />
-                <input
-                  value={githubConfig.repoSlug}
-                  onChange={(e) =>
-                    setGithubConfig((prev) => ({ ...prev, repoSlug: e.target.value }))
-                  }
-                  placeholder="owner/repo (e.g. Sohil56/Executive-Coach)"
-                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono"
-                />
-              </div>
-              <div>
-                <input
-                  value={githubConfig.branch}
-                  onChange={(e) =>
-                    setGithubConfig((prev) => ({ ...prev, branch: e.target.value }))
-                  }
-                  placeholder="Branch (main)"
-                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono text-center"
-                  title="Default branch to inspect if no GitHub Release is published"
-                />
-              </div>
-            </div>
-
-            <div className="relative">
-              <Key
-                size={12}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
-              />
-              <input
-                type="password"
-                value={githubConfig.githubToken || ''}
-                onChange={(e) =>
-                  setGithubConfig((prev) => ({ ...prev, githubToken: e.target.value }))
-                }
-                placeholder="GitHub Personal Access Token (optional — only needed for private repos)"
-                className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
-              />
-            </div>
-
-            <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer pt-0.5">
-              <input
-                type="checkbox"
-                checked={githubConfig.autoUpdate}
-                onChange={(e) =>
-                  setGithubConfig((prev) => ({ ...prev, autoUpdate: e.target.checked }))
-                }
-                className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span>Automatically download &amp; trigger update when a newer release is found</span>
-            </label>
-
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleCheckForUpdates}
-                disabled={isCheckingUpdate}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
-              >
-                {isCheckingUpdate ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <RefreshCw size={13} />
-                )}
-                Check GitHub for Updates
-              </button>
-
-              {updateResult?.hasUpdate && updateResult.downloadUrl && (
-                <button
-                  type="button"
-                  onClick={() => triggerAutomaticUpdateDownload(updateResult)}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs"
-                >
-                  <Download size={13} />
-                  Download v{updateResult.latestVersion}
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  try {
-                    if (typeof chrome !== 'undefined' && chrome.runtime?.reload) {
-                      chrome.runtime.reload();
-                    } else {
-                      window.location.reload();
-                    }
-                  } catch {
-                    window.location.reload();
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors"
-                title="Reload extension runtime to apply extracted updates"
-              >
-                <RotateCw size={12} />
-                Reload Extension
-              </button>
-            </div>
-
-            {updateFeedback && (
-              <div
-                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
-                  updateFeedback.type === 'success'
-                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                    : updateFeedback.type === 'warning'
-                      ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
-                      : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
-                }`}
-              >
-                {updateFeedback.type === 'success' ? (
-                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
-                ) : (
-                  <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                )}
-                <span className="leading-snug">{updateFeedback.message}</span>
-              </div>
-            )}
-
-            {updateResult && updateResult.ok && (
-              <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-navy-950 border border-slate-300 dark:border-navy-800 space-y-1.5 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {updateResult.releaseTitle || `Latest: v${updateResult.latestVersion}`}
-                  </span>
-                  <span
-                    className={`text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded ${
-                      updateResult.hasUpdate
-                        ? 'bg-amber-200 dark:bg-amber-900/70 text-amber-950 dark:text-amber-200'
-                        : 'bg-emerald-200 dark:bg-emerald-900/70 text-emerald-950 dark:text-emerald-200'
-                    }`}
-                  >
-                    {updateResult.hasUpdate
-                      ? `Update Available: v${updateResult.latestVersion}`
-                      : `Up to Date (v${updateResult.currentVersion})`}
-                  </span>
-                </div>
-                {updateResult.releaseNotes && (
-                  <p className="text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap line-clamp-4">
-                    {updateResult.releaseNotes}
-                  </p>
-                )}
-                {updateResult.htmlUrl && (
-                  <a
-                    href={updateResult.htmlUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline pt-0.5"
-                  >
-                    <span>View Release on GitHub</span>
-                    <ExternalLink size={11} />
-                  </a>
-                )}
-              </div>
-            )}
-
-            {githubConfig.lastCheckedISO && (
-              <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                Last checked: {new Date(githubConfig.lastCheckedISO).toLocaleString()}
-                {githubConfig.latestAvailableVersion
-                  ? ` · Latest remote version: v${githubConfig.latestAvailableVersion}`
-                  : ''}
-              </p>
-            )}
-
-            {/* ── Publish Release v0.2.0 to GitHub ── */}
-            <div className="pt-3 mt-2 border-t border-slate-200 dark:border-navy-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">
-                    Publish Release v0.2.0 to GitHub
-                  </p>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                    Creates tag <code className="font-mono">v0.2.0</code> on{' '}
-                    <code className="font-mono">{githubConfig.repoSlug || 'Sohil56/Executive-Coach'}</code> with full changelog &amp; compiled <code className="font-mono">.zip</code> asset.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowReleasePublisher((prev) => !prev)}
-                  className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-navy-700 hover:border-indigo-400 transition-colors whitespace-nowrap shrink-0"
-                >
-                  {showReleasePublisher ? 'Hide Publisher' : 'Configure & Publish'}
-                </button>
-              </div>
-
-              {showReleasePublisher && (
-                <div className="space-y-2.5 pt-1">
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Version Tag
-                      </label>
-                      <input
-                        value={releaseTag}
-                        onChange={(e) => setReleaseTag(e.target.value)}
-                        placeholder="v0.2.0"
-                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono tabular-nums focus:outline-none focus:border-indigo-600"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        Release Title
-                      </label>
-                      <input
-                        value={releaseTitle}
-                        onChange={(e) => setReleaseTitle(e.target.value)}
-                        placeholder="v0.2.0 — Release Title"
-                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-medium focus:outline-none focus:border-indigo-600"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
-                        Release Notes &amp; Upgrade Instructions (Markdown)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setReleaseTag(DEFAULT_V020_TAG);
-                          setReleaseTitle(DEFAULT_V020_RELEASE_TITLE);
-                          setReleaseNotes(DEFAULT_V020_RELEASE_NOTES);
-                        }}
-                        className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-                      >
-                        Reset to v0.2.0 Template
-                      </button>
-                    </div>
-                    <textarea
-                      rows={7}
-                      value={releaseNotes}
-                      onChange={(e) => setReleaseNotes(e.target.value)}
-                      className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg p-2.5 text-[11px] font-mono text-slate-900 dark:text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-600"
-                    />
-                  </div>
-
-                  <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={attachCompiledZip}
-                      onChange={(e) => setAttachCompiledZip(e.target.checked)}
-                      className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span>
-                      Attach compiled extension archive (<code className="font-mono">{DEFAULT_V020_ASSET_NAME}</code>) to GitHub Release
-                    </span>
-                  </label>
-
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handlePublishGitHubRelease}
-                      disabled={isPublishingRelease}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
-                    >
-                      {isPublishingRelease ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Upload size={13} />
-                      )}
-                      {isPublishingRelease
-                        ? `Publishing ${releaseTag || 'v0.2.0'}...`
-                        : `Publish ${releaseTag || 'v0.2.0'} Release to GitHub`}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleDownloadCompiledZip}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors whitespace-nowrap shrink-0"
-                      title="Download compiled v0.2.0 extension zip archive locally"
-                    >
-                      <Download size={13} />
-                      Download Compiled v0.2.0 (.zip)
-                    </button>
-                  </div>
-
-                  {publishFeedback && (
-                    <div
-                      className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
-                        publishFeedback.type === 'success'
-                          ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
-                          : publishFeedback.type === 'warning'
-                            ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
-                            : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
-                      }`}
-                    >
-                      {publishFeedback.type === 'success' ? (
-                        <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
-                      ) : (
-                        <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                      )}
-                      <div className="space-y-1">
-                        <p className="leading-snug">{publishFeedback.message}</p>
-                        {publishResult?.htmlUrl && (
-                          <div className="flex flex-wrap items-center gap-3 pt-0.5">
-                            <a
-                              href={publishResult.htmlUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[11px] font-bold underline"
-                            >
-                              <span>Open {publishResult.tagName} on GitHub</span>
-                              <ExternalLink size={11} />
-                            </a>
-                            {publishResult.assetDownloadUrl && (
-                              <a
-                                href={publishResult.assetDownloadUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-[11px] font-bold underline"
-                              >
-                                <span>Direct Zip Asset Link</span>
-                                <Download size={11} />
-                              </a>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
           </div>
         </section>
 
