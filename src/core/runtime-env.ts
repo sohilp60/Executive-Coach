@@ -10,7 +10,10 @@ import {
   fetchNotionAvailableStatuses,
   syncNotionTasksWithStatuses,
 } from './storage/notion-sync';
-import { checkGitHubForUpdates } from './updater/github-updater';
+import {
+  checkGitHubForUpdates,
+  publishGitHubRelease,
+} from './updater/github-updater';
 
 export function setupChromePolyfill(): void {
   if (typeof window === 'undefined') return;
@@ -176,10 +179,22 @@ export function setupChromePolyfill(): void {
             .catch((err) =>
               sendResponse({
                 ok: false,
-                currentVersion: '0.1.1',
-                latestVersion: '0.1.1',
+                currentVersion: '0.2.0',
+                latestVersion: '0.2.0',
                 hasUpdate: false,
                 source: 'github-release',
+                error: String(err?.message || err),
+              })
+            );
+          return;
+        }
+        if (message?.type === 'PUBLISH_GITHUB_RELEASE') {
+          publishGitHubRelease(message.payload)
+            .then((res) => sendResponse(res))
+            .catch((err) =>
+              sendResponse({
+                ok: false,
+                tagName: message.payload?.tagName || 'v0.2.0',
                 error: String(err?.message || err),
               })
             );

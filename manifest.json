@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Senior PO Executive Coach",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "AI Executive Coach & Anti-Procrastination Companion for Senior Product Owners",
   "permissions": [
     "sidePanel",
@@ -40,6 +40,7 @@
     "https://outlook.live.com/*",
     "https://*.atlassian.net/*",
     "https://api.github.com/*",
+    "https://uploads.github.com/*",
     "https://github.com/*",
     "https://raw.githubusercontent.com/*"
   ],

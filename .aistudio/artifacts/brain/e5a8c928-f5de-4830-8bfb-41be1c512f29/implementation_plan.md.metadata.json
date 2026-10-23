@@ -1,6 +1,6 @@
 {
-  "summary":  "Comprehensive implementation plan to fix all core bugs, wire up disconnected modules (Morning Triage Modal, PII Scrubber, Grab Active Tab, Google Drive PKCE Backup/Restore), unify split LLM and storage layers, and enable dual-mode Chrome Extension + Web Preview compatibility.",
-  "updatedAt":  "2026-10-23T10:26:01.564687075Z",
+  "summary":  "Implementation plan for bumping the Senior PO Executive Coach extension to v0.2.0, packaging the compiled extension release archive, and adding a direct GitHub Release Publisher in Settings for Sohil56/Executive-Coach with full changelog and asset attachment.",
+  "updatedAt":  "2026-10-23T11:18:41.131221165Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

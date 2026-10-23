@@ -40,9 +40,14 @@ import type {
   NotionTask,
   GitHubUpdateConfig,
   UpdateCheckResult,
+  GitHubReleasePublishResult,
 } from '../../types/schema';
 import {
   DEFAULT_GITHUB_UPDATE_CONFIG,
+  DEFAULT_V020_TAG,
+  DEFAULT_V020_RELEASE_TITLE,
+  DEFAULT_V020_RELEASE_NOTES,
+  DEFAULT_V020_ASSET_NAME,
   getCurrentExtensionVersion,
   normalizeRepoSlug,
   triggerAutomaticUpdateDownload,
@@ -216,12 +221,24 @@ export default function ProviderSettings({
   const [providerErrors, setProviderErrors] = useState<Record<string, string>>({});
   const [notionFeedback, setNotionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // GitHub Updater state
+  // GitHub Updater & Release Publisher state
   const [githubConfig, setGithubConfig] = useState<GitHubUpdateConfig>(DEFAULT_GITHUB_UPDATE_CONFIG);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [updateFeedback, setUpdateFeedback] = useState<{
     type: 'success' | 'info' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+
+  const [showReleasePublisher, setShowReleasePublisher] = useState(true);
+  const [releaseTag, setReleaseTag] = useState(DEFAULT_V020_TAG);
+  const [releaseTitle, setReleaseTitle] = useState(DEFAULT_V020_RELEASE_TITLE);
+  const [releaseNotes, setReleaseNotes] = useState(DEFAULT_V020_RELEASE_NOTES);
+  const [attachCompiledZip, setAttachCompiledZip] = useState(true);
+  const [isPublishingRelease, setIsPublishingRelease] = useState(false);
+  const [publishResult, setPublishResult] = useState<GitHubReleasePublishResult | null>(null);
+  const [publishFeedback, setPublishFeedback] = useState<{
+    type: 'success' | 'warning' | 'error';
     message: string;
   } | null>(null);
 
@@ -960,6 +977,125 @@ export default function ProviderSettings({
     } finally {
       setIsCheckingUpdate(false);
     }
+  };
+
+  // ── Publish v0.2.0 Release to GitHub ─────────────────────────────
+  const handlePublishGitHubRelease = async () => {
+    setPublishFeedback(null);
+    setPublishResult(null);
+
+    const normalizedRepo = normalizeRepoSlug(githubConfig.repoSlug || DEFAULT_GITHUB_UPDATE_CONFIG.repoSlug);
+    const cleanBranch = (githubConfig.branch || 'main').trim() || 'main';
+    const cleanToken = (githubConfig.githubToken || '').trim();
+    const cleanTag = (releaseTag || DEFAULT_V020_TAG).trim();
+    const cleanTitle = (releaseTitle || DEFAULT_V020_RELEASE_TITLE).trim();
+
+    if (!cleanToken) {
+      setPublishFeedback({
+        type: 'error',
+        message:
+          'Please enter your GitHub Personal Access Token above (with "repo" or "Contents: Read & write" permission) so the extension can create release v0.2.0 on Sohil56/Executive-Coach.',
+      });
+      return;
+    }
+
+    setIsPublishingRelease(true);
+
+    const updatedCfg: GitHubUpdateConfig = {
+      ...githubConfig,
+      repoSlug: normalizedRepo,
+      branch: cleanBranch,
+      githubToken: cleanToken,
+    };
+    setGithubConfig(updatedCfg);
+    await chrome.storage.local.set({ po_github_update_config: updatedCfg });
+
+    try {
+      const res = await new Promise<GitHubReleasePublishResult>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'PUBLISH_GITHUB_RELEASE',
+            payload: {
+              repoSlug: normalizedRepo,
+              githubToken: cleanToken,
+              tagName: cleanTag,
+              targetCommitish: cleanBranch,
+              releaseName: cleanTitle,
+              body: releaseNotes || DEFAULT_V020_RELEASE_NOTES,
+              draft: false,
+              prerelease: false,
+              attachCompiledZip,
+              assetName: DEFAULT_V020_ASSET_NAME,
+            },
+          },
+          (response: GitHubReleasePublishResult) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      setPublishResult(res);
+
+      if (!res.ok) {
+        setPublishFeedback({
+          type: 'error',
+          message: res.error || `Failed to publish release ${cleanTag} to ${normalizedRepo}.`,
+        });
+        return;
+      }
+
+      setGithubConfig((prev) => ({
+        ...prev,
+        lastCheckedISO: new Date().toISOString(),
+        latestAvailableVersion: cleanTag.replace(/^[vV]/, ''),
+        latestReleaseUrl: res.htmlUrl,
+        latestDownloadUrl: res.assetDownloadUrl,
+        latestReleaseNotes: releaseNotes,
+      }));
+
+      if (res.assetWarning) {
+        setPublishFeedback({
+          type: 'warning',
+          message: `${res.updatedExisting ? 'Updated' : 'Published'} release ${res.tagName} on ${normalizedRepo}! Note: ${res.assetWarning}`,
+        });
+      } else {
+        setPublishFeedback({
+          type: 'success',
+          message: `Successfully ${res.updatedExisting ? 'updated' : 'published'} release ${res.tagName} (${cleanTitle}) on ${normalizedRepo}${
+            res.assetUploaded ? ` with compiled asset ${DEFAULT_V020_ASSET_NAME}` : ''
+          }!`,
+        });
+      }
+    } catch (err: any) {
+      setPublishFeedback({
+        type: 'error',
+        message: err?.message || 'Unexpected error while publishing GitHub release.',
+      });
+    } finally {
+      setIsPublishingRelease(false);
+    }
+  };
+
+  const handleDownloadCompiledZip = () => {
+    let zipUrl = `/${DEFAULT_V020_ASSET_NAME}`;
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+        zipUrl = chrome.runtime.getURL(DEFAULT_V020_ASSET_NAME);
+      }
+    } catch {
+      zipUrl = `/${DEFAULT_V020_ASSET_NAME}`;
+    }
+
+    const a = document.createElement('a');
+    a.href = zipUrl;
+    a.download = DEFAULT_V020_ASSET_NAME;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   // ── Export All Configurations & Memory ───────────────────────────
@@ -2188,6 +2324,25 @@ export default function ProviderSettings({
               </button>
             </div>
 
+            {updateFeedback && (
+              <div
+                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                  updateFeedback.type === 'success'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    : updateFeedback.type === 'warning'
+                      ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                      : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                }`}
+              >
+                {updateFeedback.type === 'success' ? (
+                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                ) : (
+                  <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                )}
+                <span className="leading-snug">{updateFeedback.message}</span>
+              </div>
+            )}
+
             {updateResult && updateResult.ok && (
               <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-navy-950 border border-slate-300 dark:border-navy-800 space-y-1.5 text-xs">
                 <div className="flex items-center justify-between">
@@ -2229,10 +2384,171 @@ export default function ProviderSettings({
               <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
                 Last checked: {new Date(githubConfig.lastCheckedISO).toLocaleString()}
                 {githubConfig.latestAvailableVersion
-                  ? ` • Latest remote version: v${githubConfig.latestAvailableVersion}`
+                  ? ` · Latest remote version: v${githubConfig.latestAvailableVersion}`
                   : ''}
               </p>
             )}
+
+            {/* ── Publish Release v0.2.0 to GitHub ── */}
+            <div className="pt-3 mt-2 border-t border-slate-200 dark:border-navy-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">
+                    Publish Release v0.2.0 to GitHub
+                  </p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Creates tag <code className="font-mono">v0.2.0</code> on{' '}
+                    <code className="font-mono">{githubConfig.repoSlug || 'Sohil56/Executive-Coach'}</code> with full changelog &amp; compiled <code className="font-mono">.zip</code> asset.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReleasePublisher((prev) => !prev)}
+                  className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-navy-700 hover:border-indigo-400 transition-colors whitespace-nowrap shrink-0"
+                >
+                  {showReleasePublisher ? 'Hide Publisher' : 'Configure & Publish'}
+                </button>
+              </div>
+
+              {showReleasePublisher && (
+                <div className="space-y-2.5 pt-1">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Version Tag
+                      </label>
+                      <input
+                        value={releaseTag}
+                        onChange={(e) => setReleaseTag(e.target.value)}
+                        placeholder="v0.2.0"
+                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono tabular-nums focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Release Title
+                      </label>
+                      <input
+                        value={releaseTitle}
+                        onChange={(e) => setReleaseTitle(e.target.value)}
+                        placeholder="v0.2.0 — Release Title"
+                        className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-medium focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
+                        Release Notes &amp; Upgrade Instructions (Markdown)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReleaseTag(DEFAULT_V020_TAG);
+                          setReleaseTitle(DEFAULT_V020_RELEASE_TITLE);
+                          setReleaseNotes(DEFAULT_V020_RELEASE_NOTES);
+                        }}
+                        className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                      >
+                        Reset to v0.2.0 Template
+                      </button>
+                    </div>
+                    <textarea
+                      rows={7}
+                      value={releaseNotes}
+                      onChange={(e) => setReleaseNotes(e.target.value)}
+                      className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg p-2.5 text-[11px] font-mono text-slate-900 dark:text-slate-100 leading-relaxed focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={attachCompiledZip}
+                      onChange={(e) => setAttachCompiledZip(e.target.checked)}
+                      className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span>
+                      Attach compiled extension archive (<code className="font-mono">{DEFAULT_V020_ASSET_NAME}</code>) to GitHub Release
+                    </span>
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handlePublishGitHubRelease}
+                      disabled={isPublishingRelease}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-xs disabled:opacity-50 whitespace-nowrap shrink-0"
+                    >
+                      {isPublishingRelease ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Upload size={13} />
+                      )}
+                      {isPublishingRelease
+                        ? `Publishing ${releaseTag || 'v0.2.0'}...`
+                        : `Publish ${releaseTag || 'v0.2.0'} Release to GitHub`}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleDownloadCompiledZip}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors whitespace-nowrap shrink-0"
+                      title="Download compiled v0.2.0 extension zip archive locally"
+                    >
+                      <Download size={13} />
+                      Download Compiled v0.2.0 (.zip)
+                    </button>
+                  </div>
+
+                  {publishFeedback && (
+                    <div
+                      className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                        publishFeedback.type === 'success'
+                          ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                          : publishFeedback.type === 'warning'
+                            ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                            : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                      }`}
+                    >
+                      {publishFeedback.type === 'success' ? (
+                        <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                      ) : (
+                        <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                      )}
+                      <div className="space-y-1">
+                        <p className="leading-snug">{publishFeedback.message}</p>
+                        {publishResult?.htmlUrl && (
+                          <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                            <a
+                              href={publishResult.htmlUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-bold underline"
+                            >
+                              <span>Open {publishResult.tagName} on GitHub</span>
+                              <ExternalLink size={11} />
+                            </a>
+                            {publishResult.assetDownloadUrl && (
+                              <a
+                                href={publishResult.assetDownloadUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold underline"
+                              >
+                                <span>Direct Zip Asset Link</span>
+                                <Download size={11} />
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 

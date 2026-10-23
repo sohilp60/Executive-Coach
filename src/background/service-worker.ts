@@ -31,7 +31,10 @@ import {
   fetchNotionAvailableStatuses,
   syncNotionTasksWithStatuses,
 } from '../core/storage/notion-sync';
-import { checkGitHubForUpdates } from '../core/updater/github-updater';
+import {
+  checkGitHubForUpdates,
+  publishGitHubRelease,
+} from '../core/updater/github-updater';
 import type { LLMProviderConfig } from '../types/schema';
 
 // ──────────────────────────────────────────────────────────
@@ -909,10 +912,26 @@ chrome.runtime.onMessage.addListener(
           } catch (err: any) {
             sendResponse({
               ok: false,
-              currentVersion: '0.1.1',
-              latestVersion: '0.1.1',
+              currentVersion: '0.2.0',
+              latestVersion: '0.2.0',
               hasUpdate: false,
               source: 'github-release',
+              error: String(err?.message || err),
+            });
+          }
+        })();
+        return true;
+      }
+
+      case 'PUBLISH_GITHUB_RELEASE': {
+        (async () => {
+          try {
+            const result = await publishGitHubRelease(message.payload);
+            sendResponse(result);
+          } catch (err: any) {
+            sendResponse({
+              ok: false,
+              tagName: message.payload?.tagName || 'v0.2.0',
               error: String(err?.message || err),
             });
           }

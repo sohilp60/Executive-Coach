@@ -110,6 +110,34 @@ export interface UpdateCheckResult {
   error?: string;
 }
 
+export interface GitHubReleasePublishPayload {
+  repoSlug: string;
+  githubToken: string;
+  tagName: string;
+  targetCommitish?: string;
+  releaseName: string;
+  body: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  attachCompiledZip?: boolean;
+  assetName?: string;
+}
+
+export interface GitHubReleasePublishResult {
+  ok: boolean;
+  releaseId?: number;
+  tagName: string;
+  releaseName?: string;
+  htmlUrl?: string;
+  uploadUrl?: string;
+  assetUploaded?: boolean;
+  assetName?: string;
+  assetDownloadUrl?: string;
+  assetWarning?: string;
+  updatedExisting?: boolean;
+  error?: string;
+}
+
 export interface ExtensionBackupBundle {
   schemaVersion: number;
   app: 'po-executive-coach';
