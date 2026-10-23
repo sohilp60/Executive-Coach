@@ -51,6 +51,7 @@ export default function MemoryVault({ memory, persistMemory }: MemoryVaultProps)
   const [tempValue, setTempValue] = useState('');
   const [expandedStakeholder, setExpandedStakeholder] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // ─── Profile Tab ──────────────────────────────────────────────
   const startEdit = (field: string, value: string) => {
@@ -188,20 +189,47 @@ export default function MemoryVault({ memory, persistMemory }: MemoryVaultProps)
   // ─── GDrive Sync ─────────────────────────────────────────────
   const handleGDriveBackup = async () => {
     setSyncing(true);
+    setSyncFeedback(null);
     try {
-      const response = await new Promise<any>((resolve) =>
-        chrome.runtime.sendMessage({ type: 'GDRIVE_AUTH', clientId: '' }, resolve)
+      const storage = await new Promise<Record<string, any>>((resolve) =>
+        chrome.storage.local.get(['po_gdrive_client_id'], (res) => resolve(res || {}))
       );
-      if (response?.token) {
-        await new Promise<void>((resolve) =>
-          chrome.runtime.sendMessage(
-            { type: 'GDRIVE_UPLOAD', token: response.token, data: memory },
-            () => resolve()
-          )
-        );
+      const clientId = storage?.po_gdrive_client_id?.trim();
+      if (!clientId) {
+        setSyncFeedback({
+          type: 'error',
+          message: 'Google OAuth Client ID is missing. Please set it in Settings → Google Drive Backup.',
+        });
+        return;
       }
-    } catch (err) {
+
+      const authRes = await new Promise<any>((resolve) =>
+        chrome.runtime.sendMessage({ type: 'GDRIVE_AUTH', clientId }, resolve)
+      );
+      if (!authRes?.ok || !authRes?.data?.token) {
+        throw new Error(authRes?.error || 'Authentication with Google failed.');
+      }
+
+      const uploadRes = await new Promise<any>((resolve) =>
+        chrome.runtime.sendMessage(
+          { type: 'GDRIVE_UPLOAD', token: authRes.data.token, data: memory },
+          resolve
+        )
+      );
+      if (!uploadRes?.ok) {
+        throw new Error(uploadRes?.error || 'Failed to upload backup to Google Drive.');
+      }
+
+      setSyncFeedback({
+        type: 'success',
+        message: 'Successfully backed up Memory Vault to Google Drive!',
+      });
+    } catch (err: any) {
       console.warn('GDrive backup failed:', err);
+      setSyncFeedback({
+        type: 'error',
+        message: `Backup failed: ${err.message || String(err)}`,
+      });
     } finally {
       setSyncing(false);
     }
@@ -209,20 +237,58 @@ export default function MemoryVault({ memory, persistMemory }: MemoryVaultProps)
 
   const handleGDriveRestore = async () => {
     setSyncing(true);
+    setSyncFeedback(null);
     try {
-      const response = await new Promise<any>((resolve) =>
-        chrome.runtime.sendMessage({ type: 'GDRIVE_AUTH', clientId: '' }, resolve)
+      const storage = await new Promise<Record<string, any>>((resolve) =>
+        chrome.storage.local.get(['po_gdrive_client_id'], (res) => resolve(res || {}))
       );
-      if (response?.token) {
-        const data = await new Promise<any>((resolve) =>
-          chrome.runtime.sendMessage({ type: 'GDRIVE_DOWNLOAD', token: response.token }, resolve)
-        );
-        if (data?.memory) {
-          persistMemory(data.memory);
-        }
+      const clientId = storage?.po_gdrive_client_id?.trim();
+      if (!clientId) {
+        setSyncFeedback({
+          type: 'error',
+          message: 'Google OAuth Client ID is missing. Please set it in Settings → Google Drive Backup.',
+        });
+        return;
       }
-    } catch (err) {
+
+      const authRes = await new Promise<any>((resolve) =>
+        chrome.runtime.sendMessage({ type: 'GDRIVE_AUTH', clientId }, resolve)
+      );
+      if (!authRes?.ok || !authRes?.data?.token) {
+        throw new Error(authRes?.error || 'Authentication with Google failed.');
+      }
+
+      const downloadRes = await new Promise<any>((resolve) =>
+        chrome.runtime.sendMessage({ type: 'GDRIVE_DOWNLOAD', token: authRes.data.token }, resolve)
+      );
+      if (!downloadRes?.ok) {
+        throw new Error(downloadRes?.error || 'Failed to download backup from Google Drive.');
+      }
+
+      if (!downloadRes.data) {
+        setSyncFeedback({
+          type: 'error',
+          message: 'No existing backup found in Google Drive.',
+        });
+        return;
+      }
+
+      const restoredMemory = downloadRes.data.memory || downloadRes.data;
+      if (restoredMemory && typeof restoredMemory === 'object') {
+        persistMemory(restoredMemory);
+        setSyncFeedback({
+          type: 'success',
+          message: 'Memory Vault restored successfully from Google Drive!',
+        });
+      } else {
+        throw new Error('Downloaded backup was invalid or empty.');
+      }
+    } catch (err: any) {
       console.warn('GDrive restore failed:', err);
+      setSyncFeedback({
+        type: 'error',
+        message: `Restore failed: ${err.message || String(err)}`,
+      });
     } finally {
       setSyncing(false);
     }
@@ -262,6 +328,23 @@ export default function MemoryVault({ memory, persistMemory }: MemoryVaultProps)
             </button>
           </div>
         </div>
+        {syncFeedback && (
+          <div
+            className={`mt-2 p-2 rounded-lg text-xs font-semibold flex items-center justify-between ${
+              syncFeedback.type === 'success'
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800'
+            }`}
+          >
+            <span>{syncFeedback.message}</span>
+            <button
+              onClick={() => setSyncFeedback(null)}
+              className="ml-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tab Bar */}

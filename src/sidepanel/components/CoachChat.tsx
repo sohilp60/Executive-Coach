@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Clipboard, Loader2 } from 'lucide-react';
+import { Send, Clipboard, Loader2, Sparkles } from 'lucide-react';
 import type {
   POMemoryStore,
   LLMProviderConfig,
@@ -8,6 +8,7 @@ import type {
 } from '../../types/schema';
 import { executeLLMRequest } from '../../core/llms/router';
 import { buildSystemPrompt } from '../../core/llms/prompts';
+import { parseActions, stripActionBlocks } from '../../core/llm/action-parser';
 import MarkdownRenderer from './MarkdownRenderer';
 
 interface ChatMessage {
@@ -27,53 +28,6 @@ interface CoachChatProps {
   persistMemory: (m: POMemoryStore) => void;
 }
 
-/** Strip <coach_action>...</coach_action> XML blocks from displayed text */
-function stripActionBlocks(text: string): string {
-  return text.replace(/<coach_action>[\s\S]*?<\/coach_action>/g, '').trim();
-}
-
-/** Parse coach action blocks and execute memory upserts */
-function parseAndExecuteActions(
-  text: string,
-  memory: POMemoryStore,
-  persistMemory: (m: POMemoryStore) => void
-) {
-  const regex = /<coach_action>([\s\S]*?)<\/coach_action>/g;
-  let match: RegExpExecArray | null;
-  let updated = { ...memory };
-  let didUpdate = false;
-
-  while ((match = regex.exec(text)) !== null) {
-    try {
-      const action = JSON.parse(match[1]);
-      if (action.tool === 'upsert_memory_fact' && action.args) {
-        const { category, fact } = action.args;
-        if (category && fact) {
-          updated = {
-            ...updated,
-            productRulesAndContext: [
-              ...updated.productRulesAndContext,
-              {
-                id: crypto.randomUUID(),
-                category: category as any,
-                fact,
-                updatedAt: new Date().toISOString(),
-              },
-            ],
-          };
-          didUpdate = true;
-        }
-      }
-    } catch {
-      // Ignore malformed action blocks
-    }
-  }
-
-  if (didUpdate) {
-    persistMemory(updated);
-  }
-}
-
 export default function CoachChat({
   memory,
   providers,
@@ -86,6 +40,8 @@ export default function CoachChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isGrabbingTab, setIsGrabbingTab] = useState(false);
+  const [memoryNotification, setMemoryNotification] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -113,27 +69,31 @@ export default function CoachChat({
   }, [messages]);
 
   const grabActiveTab = useCallback(async () => {
+    setIsGrabbingTab(true);
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id) return;
-
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['src/content/dom-extractor.ts'],
+      const response = await new Promise<any>((resolve) => {
+        chrome.runtime.sendMessage({ type: 'GRAB_TAB_CONTEXT' }, (res) => {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(res);
+          }
+        });
       });
 
-      // After injecting, call the extractor function
-      const extractResults = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => {
-          return (window as any).__extractPageContext?.() || document.body.innerText.slice(0, 8000);
-        },
-      });
-
-      const context = extractResults?.[0]?.result || '';
-      setActiveTabContext(context);
+      if (response?.ok && response.data) {
+        setActiveTabContext(response.data);
+      } else {
+        // Fallback for standalone preview / current page
+        const title = document.title || 'Work Tab';
+        const url = window.location.href;
+        const excerpt = document.body ? document.body.innerText.slice(0, 3000) : '';
+        setActiveTabContext(`[Active Work View]\nTitle: ${title}\nURL: ${url}\nContent:\n${excerpt}`);
+      }
     } catch (err) {
       console.warn('Failed to grab tab context:', err);
+    } finally {
+      setIsGrabbingTab(false);
     }
   }, [setActiveTabContext]);
 
@@ -166,7 +126,7 @@ export default function CoachChat({
     setMessages((prev) => [...prev, assistantMsg]);
 
     try {
-      // Pitfall #7: Execute LLM fetch() directly from Side Panel, NOT from SW
+      // Execute LLM fetch directly from Side Panel (MV3 streaming safe)
       const systemPrompt = buildSystemPrompt(memory, tasks, activeTabContext || undefined);
       const llmMessages = updatedMessages.map((m) => ({
         role: m.role,
@@ -197,8 +157,67 @@ export default function CoachChat({
         )
       );
 
-      // Parse and execute coach actions (pitfall #6: dual-mode XML parsing)
-      parseAndExecuteActions(fullResponse, memory, persistMemory);
+      // Parse and execute coach actions (dual-mode XML/tool parser)
+      const actions = parseActions(fullResponse);
+      if (actions.length > 0) {
+        let updatedMemory = { ...memory };
+        let updatedCount = 0;
+        let lastFactDesc = '';
+
+        for (const action of actions) {
+          if (action.type === 'upsert_memory_fact') {
+            const p = action.payload as any;
+            const category = p.category || 'process';
+            const fact = p.fact || p.content || '';
+            if (fact) {
+              updatedMemory = {
+                ...updatedMemory,
+                productRulesAndContext: [
+                  ...updatedMemory.productRulesAndContext,
+                  {
+                    id: crypto.randomUUID(),
+                    category,
+                    fact,
+                    updatedAt: new Date().toISOString(),
+                  },
+                ],
+              };
+              updatedCount++;
+              lastFactDesc = fact.slice(0, 60);
+            }
+          } else if (action.type === 'set_must_win') {
+            const p = action.payload as any;
+            const today = p.date || new Date().toISOString().split('T')[0];
+            const taskId = p.taskId || p.id;
+            if (taskId) {
+              const currentLog = updatedMemory.dailyCommitmentsLog[today] || {
+                mustWinTaskIds: [],
+                morningTriageCompleted: false,
+              };
+              if (!currentLog.mustWinTaskIds.includes(taskId)) {
+                updatedMemory = {
+                  ...updatedMemory,
+                  dailyCommitmentsLog: {
+                    ...updatedMemory.dailyCommitmentsLog,
+                    [today]: {
+                      ...currentLog,
+                      mustWinTaskIds: [...currentLog.mustWinTaskIds, taskId],
+                    },
+                  },
+                };
+                updatedCount++;
+                lastFactDesc = `Must-Win: ${taskId}`;
+              }
+            }
+          }
+        }
+
+        if (updatedCount > 0) {
+          persistMemory(updatedMemory);
+          setMemoryNotification(`Saved to Memory: ${lastFactDesc}`);
+          setTimeout(() => setMemoryNotification(null), 4000);
+        }
+      }
     } catch (err: any) {
       setMessages((prev) =>
         prev.map((m) =>
@@ -222,14 +241,43 @@ export default function CoachChat({
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-navy-950">
       {/* Chat Header */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm">
-        <h1 className="text-sm font-bold text-slate-950 dark:text-indigo-200 tracking-wide flex items-center gap-1.5">
-          <span>🎯</span> Executive Coach
-        </h1>
-        <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">
-          Ruthless triage · Anti-procrastination · Senior PO sparring
-        </p>
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm flex items-center justify-between">
+        <div>
+          <h1 className="text-sm font-bold text-slate-950 dark:text-indigo-200 tracking-wide flex items-center gap-1.5">
+            <span>🎯</span> Executive Coach
+          </h1>
+          <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">
+            Ruthless triage · Anti-procrastination · Senior PO sparring
+          </p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            onClick={() => {
+              setMessages([]);
+              chrome.storage.local.remove('po_chat_history');
+            }}
+            title="Clear Chat History"
+            className="text-[11px] font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white px-2 py-1 rounded hover:bg-slate-100 dark:hover:bg-navy-800 transition"
+          >
+            Clear
+          </button>
+        )}
       </div>
+
+      {/* Autonomous Memory Notification Banner */}
+      {memoryNotification && (
+        <div className="mx-3 mt-2 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 rounded-lg flex items-center gap-2 text-xs font-semibold text-indigo-950 dark:text-indigo-200 animate-fadeIn shadow-xs">
+          <Sparkles size={13} className="text-amber-500 shrink-0" />
+          <span className="truncate flex-1">{memoryNotification}</span>
+          <button
+            onClick={() => setMemoryNotification(null)}
+            className="text-slate-400 hover:text-slate-700 dark:hover:text-white text-xs"
+            aria-label="Dismiss notification"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Messages Container */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
@@ -303,11 +351,16 @@ export default function CoachChat({
         <div className="flex items-end gap-2">
           <button
             onClick={grabActiveTab}
+            disabled={isGrabbingTab}
             title="Grab Active Tab Context"
             aria-label="Grab Active Tab Context"
             className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-navy-800 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors shrink-0 mb-0.5"
           >
-            <Clipboard size={16} />
+            {isGrabbingTab ? (
+              <Loader2 size={16} className="animate-spin text-indigo-600" />
+            ) : (
+              <Clipboard size={16} />
+            )}
           </button>
 
           <div className="flex-1 relative">

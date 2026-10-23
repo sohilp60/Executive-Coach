@@ -6,6 +6,7 @@ interface MorningTriageModalProps {
   memory: POMemoryStore;
   tasks: NotionTask[];
   persistMemory: (m: POMemoryStore) => void;
+  persistTasks?: (tasks: NotionTask[]) => void;
   onClose: () => void;
 }
 
@@ -13,6 +14,7 @@ export default function MorningTriageModal({
   memory,
   tasks,
   persistMemory,
+  persistTasks,
   onClose,
 }: MorningTriageModalProps) {
   const [step, setStep] = useState(0);
@@ -54,6 +56,14 @@ export default function MorningTriageModal({
     }
 
     persistMemory(updated);
+
+    if (persistTasks && Object.keys(taskDeadlines).length > 0) {
+      const updatedTasks = tasks.map((t) =>
+        taskDeadlines[t.id] ? { ...t, dueDate: taskDeadlines[t.id] } : t
+      );
+      persistTasks(updatedTasks);
+    }
+
     onClose();
   };
 

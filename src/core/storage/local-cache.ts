@@ -23,8 +23,10 @@ export interface ChatMessage {
 // ── Storage key constants ──
 
 const KEYS = {
-  MEMORY_STORE: 'po_memory_store',
-  PROVIDERS: 'po_llm_providers',
+  MEMORY_STORE: 'po_memory',
+  LEGACY_MEMORY_STORE: 'po_memory_store',
+  PROVIDERS: 'po_providers',
+  LEGACY_PROVIDERS: 'po_llm_providers',
   ROUTER_SETTINGS: 'po_router_settings',
   ACTIVE_TAB_CONTEXT: 'po_active_tab_context',
   chatHistory: (sessionId: string) => `po_chat_${sessionId}`,
@@ -71,12 +73,17 @@ async function storageSet(key: string, value: unknown): Promise<void> {
 
 export async function loadMemoryStore(): Promise<POMemoryStore> {
   const stored = await storageGet<POMemoryStore>(KEYS.MEMORY_STORE);
-  return stored ?? defaultMemoryStore();
+  if (stored) return stored;
+  const legacyStored = await storageGet<POMemoryStore>(KEYS.LEGACY_MEMORY_STORE);
+  return legacyStored ?? defaultMemoryStore();
 }
 
 export async function saveMemoryStore(store: POMemoryStore): Promise<void> {
   store.lastUpdatedISO = new Date().toISOString();
-  await storageSet(KEYS.MEMORY_STORE, store);
+  await chrome.storage.local.set({
+    [KEYS.MEMORY_STORE]: store,
+    [KEYS.LEGACY_MEMORY_STORE]: store,
+  });
 }
 
 export async function loadChatHistory(
@@ -101,13 +108,20 @@ export async function loadProviders(): Promise<
   const stored = await storageGet<Record<string, LLMProviderConfig>>(
     KEYS.PROVIDERS
   );
-  return stored ?? {};
+  if (stored) return stored;
+  const legacyStored = await storageGet<Record<string, LLMProviderConfig>>(
+    KEYS.LEGACY_PROVIDERS
+  );
+  return legacyStored ?? {};
 }
 
 export async function saveProviders(
   providers: Record<string, LLMProviderConfig>
 ): Promise<void> {
-  await storageSet(KEYS.PROVIDERS, providers);
+  await chrome.storage.local.set({
+    [KEYS.PROVIDERS]: providers,
+    [KEYS.LEGACY_PROVIDERS]: providers,
+  });
 }
 
 export async function loadRouterSettings(): Promise<RouterSettings> {

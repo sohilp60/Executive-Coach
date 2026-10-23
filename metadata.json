@@ -1,0 +1,6 @@
+{
+  "name": "Senior PO Executive Coach",
+  "description": "AI Executive Coach & Anti-Procrastination Companion for Senior Product Owners",
+  "permissions": [],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

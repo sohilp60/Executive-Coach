@@ -12,6 +12,7 @@ interface FrictionBreakerProps {
   memory: POMemoryStore;
   providers: Record<string, LLMProviderConfig>;
   routerSettings: RouterSettings;
+  onOpenMorningTriage?: () => void;
 }
 
 const FRICTION_SYSTEM_PROMPT = `You are a ruthless anti-procrastination coach. The user tells you a task they're avoiding.
@@ -32,6 +33,7 @@ export default function FrictionBreaker({
   memory,
   providers,
   routerSettings,
+  onOpenMorningTriage,
 }: FrictionBreakerProps) {
   const [avoidedTask, setAvoidedTask] = useState('');
   const [microStep, setMicroStep] = useState('');
@@ -107,7 +109,7 @@ export default function FrictionBreaker({
   return (
     <div className="flex flex-col h-full bg-slate-50 dark:bg-navy-950">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="p-1.5 rounded-lg bg-orange-100 dark:bg-orange-950/60 border border-orange-300 dark:border-orange-800/60">
             <Flame size={16} className="text-orange-700 dark:text-orange-300" />
@@ -121,6 +123,14 @@ export default function FrictionBreaker({
             </p>
           </div>
         </div>
+        {onOpenMorningTriage && (
+          <button
+            onClick={onOpenMorningTriage}
+            className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-colors"
+          >
+            Morning Triage
+          </button>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">

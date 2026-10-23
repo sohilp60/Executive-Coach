@@ -1,5 +1,7 @@
 import { LLMProviderConfig, RouterSettings } from '../../types/schema';
 import { executeAnthropicRequest } from '../llm/anthropic-adapter';
+import { executeOpenAICompatibleRequest } from '../llm/openai-adapter';
+import { scrubPII } from '../privacy/pii-scrubber';
 
 export async function executeLLMRequest(
   messages: Array<{ role: string; content: string }>,
@@ -10,6 +12,15 @@ export async function executeLLMRequest(
 ): Promise<string> {
   const queue = [settings.primaryProviderId, ...settings.fallbackProviderIds].filter(Boolean);
   let lastError: Error | null = null;
+
+  // Apply strict work privacy PII scrubbing if enabled
+  const effectiveSystemPrompt = settings.strictWorkPrivacyMode
+    ? scrubPII(systemPrompt)
+    : systemPrompt;
+
+  const effectiveMessages = settings.strictWorkPrivacyMode
+    ? messages.map((m) => ({ ...m, content: scrubPII(m.content) }))
+    : messages;
 
   for (const providerId of queue) {
     const provider = providers[providerId];
@@ -24,13 +35,13 @@ export async function executeLLMRequest(
 
     try {
       if (provider.format === 'anthropic-native') {
-        const anthropicMessages = messages.map((m) => ({
+        const anthropicMessages = effectiveMessages.map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
         }));
         return await executeAnthropicRequest(
           anthropicMessages,
-          systemPrompt,
+          effectiveSystemPrompt,
           cleanKey,
           cleanModel,
           onTokenStream
@@ -38,78 +49,32 @@ export async function executeLLMRequest(
       }
 
       if (provider.format === 'openai-compatible') {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${cleanKey}`,
-        };
+        const extraHeaders: Record<string, string> = {};
         if (providerId === 'gemini') {
-          headers['x-goog-api-key'] = cleanKey;
+          extraHeaders['x-goog-api-key'] = cleanKey;
         }
 
-        const response = await fetch(`${cleanBaseUrl}/chat/completions`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            model: cleanModel,
-            messages: [{ role: 'system', content: systemPrompt }, ...messages],
-            stream: !!onTokenStream,
-            temperature: 0.7,
-          }),
-        });
+        const openAIMessages = effectiveMessages.map((m) => ({
+          role: m.role as 'system' | 'user' | 'assistant',
+          content: m.content,
+        }));
 
-        if (!response.ok) {
-          let errDetails = `HTTP ${response.status}: ${response.statusText}`;
-          try {
-            const errData = await response.json();
-            if (errData.error?.message) {
-              errDetails = errData.error.message;
-            }
-          } catch {
-            const t = await response.text().catch(() => '');
-            if (t) errDetails += ` - ${t}`;
-          }
-          throw new Error(errDetails);
-        }
-
-        if (onTokenStream && response.body) {
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let fullText = '';
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const dataStr = line.slice(6).trim();
-                if (dataStr === '[DONE]') continue;
-                try {
-                  const json = JSON.parse(dataStr);
-                  const delta = json.choices?.[0]?.delta?.content || '';
-                  if (delta) {
-                    fullText += delta;
-                    onTokenStream(fullText);
-                  }
-                } catch {
-                  // ignore JSON parse errors on partial SSE chunks
-                }
-              }
-            }
-          }
-          return fullText;
-        } else {
-          const json = await response.json();
-          return json.choices?.[0]?.message?.content || '';
-        }
+        return await executeOpenAICompatibleRequest(
+          openAIMessages,
+          effectiveSystemPrompt,
+          cleanBaseUrl,
+          cleanKey,
+          cleanModel,
+          onTokenStream,
+          extraHeaders
+        );
       }
     } catch (err: any) {
       lastError = err;
-      console.warn(`Provider ${providerId} failed:`, err.message);
+      console.warn(`[LLMRouter] Provider ${providerId} (${provider.name}) failed:`, err.message);
       // Fall through to next provider in queue
     }
   }
 
-  throw lastError || new Error('All LLM providers failed or rate-limited. Please check your provider settings.');
+  throw lastError || new Error('All configured LLM providers failed or are unconfigured. Please check Settings → LLM Providers.');
 }

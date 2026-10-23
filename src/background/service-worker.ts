@@ -245,19 +245,29 @@ chrome.runtime.onMessage.addListener(
         (async () => {
           try {
             const result = await chrome.storage.local.get('_activeTabId');
-            const tabId = result._activeTabId as number | undefined;
+            let tabId = result._activeTabId as number | undefined;
+
+            if (!tabId && chrome.tabs?.query) {
+              const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+              tabId = activeTab?.id;
+            }
+
             if (!tabId) {
-              sendResponse({ ok: false, error: 'No active tab tracked' });
+              sendResponse({ ok: false, error: 'No active tab found. Please focus a browser tab and try again.' });
               return;
             }
 
-            const results = await chrome.scripting.executeScript({
-              target: { tabId },
-              func: extractPageContext,
-            });
+            if (chrome.scripting?.executeScript) {
+              const results = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: extractPageContext,
+              });
 
-            const extracted = results?.[0]?.result ?? '';
-            sendResponse({ ok: true, data: extracted });
+              const extracted = results?.[0]?.result ?? '';
+              sendResponse({ ok: true, data: extracted });
+            } else {
+              sendResponse({ ok: false, error: 'Scripting API is not supported in this environment' });
+            }
           } catch (err) {
             sendResponse({ ok: false, error: String(err) });
           }

@@ -16,7 +16,8 @@ export async function executeOpenAICompatibleRequest(
   baseUrl: string,
   apiKey: string,
   modelId: string,
-  onTokenStream?: (accumulatedText: string) => void
+  onTokenStream?: (accumulatedText: string) => void,
+  extraHeaders?: Record<string, string>
 ): Promise<string> {
   const allMessages: OpenAIMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -30,12 +31,15 @@ export async function executeOpenAICompatibleRequest(
     temperature: 0.7,
   };
 
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    ...(extraHeaders || {}),
+  };
+
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify(body),
   });
 

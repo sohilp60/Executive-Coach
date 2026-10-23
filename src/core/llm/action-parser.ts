@@ -76,10 +76,12 @@ export function parseActions(
   while ((match = ACTION_XML_RE.exec(responseText)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (parsed.type) {
+      const actionType = (parsed.type || parsed.tool || parsed.name) as CoachActionType;
+      const actionPayload = (parsed.payload || parsed.args || parsed.input || {}) as Record<string, unknown>;
+      if (actionType) {
         actions.push({
-          type: parsed.type as CoachActionType,
-          payload: parsed.payload ?? {},
+          type: actionType,
+          payload: actionPayload,
         });
       }
     } catch (err) {

@@ -5,6 +5,8 @@ import {
   ListTodo,
   Brain,
   Settings,
+  X,
+  Sparkles,
 } from 'lucide-react';
 import type {
   POMemoryStore,
@@ -19,6 +21,7 @@ import TaskDrawer from './components/TaskDrawer';
 import MemoryVault from './components/MemoryVault';
 import ProviderSettings from './components/ProviderSettings';
 import CaptureModal from './components/CaptureModal';
+import MorningTriageModal from './components/MorningTriageModal';
 
 type ViewId = 'chat' | 'triage' | 'tasks' | 'memory' | 'settings';
 
@@ -59,6 +62,8 @@ export default function App() {
   const [tasks, setTasks] = useState<NotionTask[]>([]);
   const [activeTabContext, setActiveTabContext] = useState<string>('');
   const [pendingCapture, setPendingCapture] = useState<CapturePayload | null>(null);
+  const [isMorningTriageOpen, setIsMorningTriageOpen] = useState(false);
+  const [isTriageBannerDismissed, setIsTriageBannerDismissed] = useState(false);
 
   // Sync theme with DOM documentElement and local storage
   useEffect(() => {
@@ -69,7 +74,16 @@ export default function App() {
   // Load all persisted state on mount
   useEffect(() => {
     chrome.storage.local.get(
-      ['po_memory', 'po_providers', 'po_router_settings', 'po_tasks', 'po_theme', '_pendingCapture'],
+      [
+        'po_memory',
+        'po_memory_store',
+        'po_providers',
+        'po_llm_providers',
+        'po_router_settings',
+        'po_tasks',
+        'po_theme',
+        '_pendingCapture',
+      ],
       (result: Record<string, any>) => {
         if (result.po_theme === 'light' || result.po_theme === 'dark') {
           setTheme(result.po_theme);
@@ -77,9 +91,12 @@ export default function App() {
         if (result._pendingCapture) {
           setPendingCapture(result._pendingCapture as CapturePayload);
         }
-        if (result.po_memory) setMemory(result.po_memory as POMemoryStore);
-        if (result.po_providers) {
-          const loadedProviders = { ...(result.po_providers as Record<string, LLMProviderConfig>) };
+        const loadedMemory = result.po_memory || result.po_memory_store;
+        if (loadedMemory) setMemory(loadedMemory as POMemoryStore);
+
+        const loadedRawProviders = result.po_providers || result.po_llm_providers;
+        if (loadedRawProviders) {
+          const loadedProviders = { ...(loadedRawProviders as Record<string, LLMProviderConfig>) };
           if (
             loadedProviders.gemini &&
             (!loadedProviders.gemini.modelId ||
@@ -87,7 +104,10 @@ export default function App() {
               loadedProviders.gemini.modelId.includes('2.5-flash'))
           ) {
             loadedProviders.gemini.modelId = 'gemini-3.8-flash';
-            chrome.storage.local.set({ po_providers: loadedProviders });
+            chrome.storage.local.set({
+              po_providers: loadedProviders,
+              po_llm_providers: loadedProviders,
+            });
           }
           setProviders(loadedProviders);
         }
@@ -139,7 +159,10 @@ export default function App() {
     (updated: POMemoryStore) => {
       updated.lastUpdatedISO = new Date().toISOString();
       setMemory(updated);
-      chrome.storage.local.set({ po_memory: updated });
+      chrome.storage.local.set({
+        po_memory: updated,
+        po_memory_store: updated,
+      });
     },
     []
   );
@@ -147,7 +170,10 @@ export default function App() {
   const persistProviders = useCallback(
     (updated: Record<string, LLMProviderConfig>) => {
       setProviders(updated);
-      chrome.storage.local.set({ po_providers: updated });
+      chrome.storage.local.set({
+        po_providers: updated,
+        po_llm_providers: updated,
+      });
     },
     []
   );
@@ -188,6 +214,7 @@ export default function App() {
             memory={memory}
             providers={providers}
             routerSettings={routerSettings}
+            onOpenMorningTriage={() => setIsMorningTriageOpen(true)}
           />
         );
       case 'tasks':
@@ -218,6 +245,9 @@ export default function App() {
     }
   };
 
+  const today = new Date().toISOString().split('T')[0];
+  const isMorningTriageCompleted = Boolean(memory.dailyCommitmentsLog?.[today]?.morningTriageCompleted);
+
   return (
     <div className={`flex flex-col h-screen ${theme === 'dark' ? 'dark bg-navy-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
       {/* Universal Executive Capture Modal */}
@@ -234,6 +264,47 @@ export default function App() {
           providers={providers}
           routerSettings={routerSettings}
         />
+      )}
+
+      {/* Morning Triage Modal */}
+      {isMorningTriageOpen && (
+        <MorningTriageModal
+          memory={memory}
+          tasks={tasks}
+          persistMemory={persistMemory}
+          persistTasks={persistTasks}
+          onClose={() => setIsMorningTriageOpen(false)}
+        />
+      )}
+
+      {/* Morning Triage Daily Alert Banner */}
+      {!isMorningTriageCompleted && !isTriageBannerDismissed && (
+        <div className="bg-gradient-to-r from-amber-500/15 via-indigo-500/10 to-violet-500/15 border-b border-amber-500/30 px-3 py-2 flex items-center justify-between text-xs shrink-0 bg-white/80 dark:bg-navy-900/80 backdrop-blur-sm shadow-sm">
+          <div className="flex items-center gap-2 overflow-hidden mr-2">
+            <span className="p-1 rounded-md bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+              <Sparkles size={13} />
+            </span>
+            <div className="truncate">
+              <span className="font-bold text-slate-900 dark:text-white mr-1.5">Morning Triage:</span>
+              <span className="text-slate-600 dark:text-slate-300">Lock in your 1–2 Must-Wins today</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => setIsMorningTriageOpen(true)}
+              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] shadow-sm transition-all"
+            >
+              Start
+            </button>
+            <button
+              onClick={() => setIsTriageBannerDismissed(true)}
+              className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              aria-label="Dismiss banner"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Main Content Area */}
