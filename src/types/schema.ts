@@ -54,6 +54,18 @@ export interface NotionConfig {
   databaseId: string;
   notionProxyUrl?: string;
   proxyUrl?: string;
+  selectedStatuses?: string[];
+  availableStatuses?: string[];
+  syncIntervalMinutes?: number;
+  lastSyncedAtISO?: string;
+}
+
+export interface NotionDeltaStats {
+  added: number;
+  updated: number;
+  removed: number;
+  isDelta: boolean;
+  syncedAt: string;
 }
 
 export interface NotionTask {
@@ -64,6 +76,7 @@ export interface NotionTask {
   priority: string;
   url: string;
   archived?: boolean;
+  lastEditedTime?: string;
   coachStrategy?: string;
   coachStrategyBlockId?: string;
   coachStrategyUpdatedAt?: string;

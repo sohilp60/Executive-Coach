@@ -117,17 +117,61 @@ export default function App() {
     );
   }, []);
 
-  // Listen for background CAPTURE_READY broadcasts
+  // Listen for background CAPTURE_READY and NOTION_TASKS_UPDATED broadcasts
   useEffect(() => {
     const handleRuntimeMessage = (message: any) => {
       if (message?.type === 'CAPTURE_READY' && message.payload) {
         setPendingCapture(message.payload as CapturePayload);
+      } else if (message?.type === 'NOTION_TASKS_UPDATED' && Array.isArray(message.tasks)) {
+        setTasks(message.tasks as NotionTask[]);
       }
     };
 
     chrome.runtime.onMessage.addListener(handleRuntimeMessage);
     return () => {
       chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+    };
+  }, []);
+
+  // Periodic Delta Sync scheduler for active session / web preview
+  useEffect(() => {
+    let timerId: ReturnType<typeof setInterval> | null = null;
+
+    const scheduleFromStorage = () => {
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
+      chrome.storage.local.get(['po_notion_config'], (res: Record<string, any>) => {
+        const config = res?.po_notion_config;
+        const intervalMins = Number(config?.syncIntervalMinutes || 0);
+        if (intervalMins > 0 && config?.apiKey && config?.databaseId) {
+          timerId = setInterval(() => {
+            chrome.runtime.sendMessage(
+              { type: 'FETCH_NOTION_TASKS', isDelta: true },
+              (resp) => {
+                if (resp?.ok && Array.isArray(resp.data)) {
+                  setTasks(resp.data);
+                }
+              }
+            );
+          }, intervalMins * 60 * 1000);
+        }
+      });
+    };
+
+    scheduleFromStorage();
+
+    const handleConfigBroadcast = (message: any) => {
+      if (message?.type === 'CONFIGURE_NOTION_SYNC_ALARM') {
+        scheduleFromStorage();
+      }
+    };
+    chrome.runtime.onMessage.addListener(handleConfigBroadcast);
+
+    return () => {
+      if (timerId) clearInterval(timerId);
+      chrome.runtime.onMessage.removeListener(handleConfigBroadcast);
     };
   }, []);
 

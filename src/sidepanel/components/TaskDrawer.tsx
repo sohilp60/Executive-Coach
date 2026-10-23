@@ -14,9 +14,14 @@ import {
   Search,
   Flame,
   Zap,
+  Filter,
+  Check,
+  X,
 } from 'lucide-react';
 import type {
   NotionTask,
+  NotionConfig,
+  NotionDeltaStats,
   POMemoryStore,
   LLMProviderConfig,
   RouterSettings,
@@ -147,6 +152,13 @@ export default function TaskDrawer({
   routerSettings,
 }: TaskDrawerProps) {
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isFetchingStatuses, setIsFetchingStatuses] = useState(false);
+  const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [availableStatuses, setAvailableStatuses] = useState<string[]>([]);
+  const [pendingSelectedStatuses, setPendingSelectedStatuses] = useState<string[]>([]);
+  const [syncedStatuses, setSyncedStatuses] = useState<string[]>([]);
+  const [syncIntervalMinutes, setSyncIntervalMinutes] = useState<number>(0);
+  const [lastDeltaStats, setLastDeltaStats] = useState<NotionDeltaStats | null>(null);
   const [syncError, setSyncError] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('active');
   const [searchQuery, setSearchQuery] = useState('');
@@ -168,16 +180,44 @@ export default function TaskDrawer({
     });
   };
 
-  // Load saved filter preference & analysis
+  // Load saved filter preference, analysis, Notion config, and last delta stats
   useEffect(() => {
-    chrome.storage.local.get(['po_task_filter_mode', 'po_task_ai_analysis'], (res: Record<string, any>) => {
-      if (res.po_task_filter_mode) {
-        setFilterMode(res.po_task_filter_mode as FilterMode);
+    chrome.storage.local.get(
+      ['po_task_filter_mode', 'po_task_ai_analysis', 'po_notion_config', 'po_last_delta_stats'],
+      (res: Record<string, any>) => {
+        if (res.po_task_filter_mode) {
+          setFilterMode(res.po_task_filter_mode as FilterMode);
+        }
+        if (res.po_task_ai_analysis) {
+          setAiAnalysis(res.po_task_ai_analysis as string);
+        }
+        const nCfg = res.po_notion_config as NotionConfig | undefined;
+        if (nCfg) {
+          if (Array.isArray(nCfg.selectedStatuses)) {
+            setSyncedStatuses(nCfg.selectedStatuses);
+          }
+          if (Array.isArray(nCfg.availableStatuses)) {
+            setAvailableStatuses(nCfg.availableStatuses);
+          }
+          if (typeof nCfg.syncIntervalMinutes === 'number') {
+            setSyncIntervalMinutes(nCfg.syncIntervalMinutes);
+          }
+        }
+        if (res.po_last_delta_stats) {
+          setLastDeltaStats(res.po_last_delta_stats as NotionDeltaStats);
+        }
       }
-      if (res.po_task_ai_analysis) {
-        setAiAnalysis(res.po_task_ai_analysis as string);
+    );
+
+    const handleRuntimeUpdate = (msg: any) => {
+      if (msg?.type === 'NOTION_TASKS_UPDATED' && msg.deltaStats) {
+        setLastDeltaStats(msg.deltaStats as NotionDeltaStats);
       }
-    });
+    };
+    chrome.runtime.onMessage.addListener(handleRuntimeUpdate);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handleRuntimeUpdate);
+    };
   }, []);
 
   const setAndPersistFilterMode = (mode: FilterMode) => {
@@ -292,19 +332,77 @@ export default function TaskDrawer({
     return activeTasks[0];
   }, [tasks]);
 
-  const handleSync = async () => {
+  // Step 1: Fetch available statuses from Notion and ask the user which statuses to sync
+  const handleInitiateSync = async () => {
+    setIsFetchingStatuses(true);
+    setSyncError('');
+
+    try {
+      const stored = await chrome.storage.local.get('po_notion_config');
+      const config = stored.po_notion_config as NotionConfig | undefined;
+
+      const response = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FETCH_NOTION_STATUSES',
+            config,
+          },
+          (resp) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(resp);
+            }
+          }
+        );
+      });
+
+      if (!response?.ok) {
+        setSyncError(response?.error || 'Could not fetch statuses from Notion. Check Settings.');
+        return;
+      }
+
+      const discovered: string[] = Array.isArray(response.statuses) ? response.statuses : [];
+      setAvailableStatuses(discovered);
+
+      // Determine pre-selected statuses: use previously saved selection if valid, else default to active/non-done statuses
+      const savedSel: string[] = Array.isArray(config?.selectedStatuses) ? config.selectedStatuses : [];
+      const validSaved = savedSel.filter((s) => discovered.includes(s));
+
+      if (validSaved.length > 0) {
+        setPendingSelectedStatuses(validSaved);
+      } else {
+        const defaultActive = discovered.filter(
+          (s) => !isDoneOrArchived({ id: '', title: '', status: s, dueDate: null, priority: '', url: '' })
+        );
+        setPendingSelectedStatuses(defaultActive.length > 0 ? defaultActive : discovered);
+      }
+
+      setIsStatusModalOpen(true);
+    } catch (err: any) {
+      setSyncError(err.message || 'Failed to retrieve Notion statuses. Check Settings.');
+    } finally {
+      setIsFetchingStatuses(false);
+    }
+  };
+
+  // Step 2: Execute sync (Full for selected statuses, or Delta update)
+  const executeSync = async (statusesToSync: string[], isDelta: boolean) => {
+    setIsStatusModalOpen(false);
     setIsSyncing(true);
     setSyncError('');
 
     try {
       const stored = await chrome.storage.local.get('po_notion_config');
-      const config = stored.po_notion_config;
+      const config = stored.po_notion_config as NotionConfig | undefined;
 
       const response = await new Promise<any>((resolve, reject) => {
         chrome.runtime.sendMessage(
           {
             type: 'FETCH_NOTION_TASKS',
             config,
+            selectedStatuses: statusesToSync,
+            isDelta,
           },
           (resp) => {
             if (chrome.runtime.lastError) {
@@ -320,12 +418,28 @@ export default function TaskDrawer({
         setSyncError(response?.error || 'Sync failed. Check Notion settings.');
       } else if (response?.data) {
         persistTasks(response.data);
+        setSyncedStatuses(statusesToSync);
+        if (response.deltaStats) {
+          setLastDeltaStats(response.deltaStats as NotionDeltaStats);
+        }
       }
     } catch (err: any) {
       setSyncError(err.message || 'Sync failed. Check Notion settings.');
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleDeltaSync = () => {
+    executeSync(syncedStatuses, true);
+  };
+
+  const togglePendingStatus = (statusName: string) => {
+    setPendingSelectedStatuses((prev) =>
+      prev.includes(statusName)
+        ? prev.filter((s) => s !== statusName)
+        : [...prev, statusName]
+    );
   };
 
   const runAiTriage = async () => {
@@ -508,37 +622,167 @@ Format with clear bold titles. Keep it punchy, executive-level, and under 130 wo
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-navy-950">
+    <div className="flex flex-col h-full bg-slate-50 dark:bg-navy-950 relative">
+      {/* ─── Select Notion Statuses to Sync Modal ─── */}
+      {isStatusModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-2xl w-full max-w-md p-4 space-y-3.5 shadow-2xl">
+            <div className="flex items-start justify-between border-b border-slate-200 dark:border-navy-800 pb-2.5">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Filter size={14} className="text-indigo-600 dark:text-indigo-400" />
+                  Select Notion Statuses to Sync
+                </h3>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">
+                  Choose which task statuses to pull from Notion to keep your board focused and clutter-free.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStatusModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-navy-800 transition-colors"
+                aria-label="Close status selector"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Quick selection helpers */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 font-mono tabular-nums">
+                {pendingSelectedStatuses.length} of {availableStatuses.length} selected
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const activeOnly = availableStatuses.filter(
+                      (s) => !isDoneOrArchived({ id: '', title: '', status: s, dueDate: null, priority: '', url: '' })
+                    );
+                    setPendingSelectedStatuses(activeOnly.length > 0 ? activeOnly : availableStatuses);
+                  }}
+                  className="px-2 py-1 rounded-md text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 transition-colors"
+                >
+                  Active Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSelectedStatuses([...availableStatuses])}
+                  className="px-2 py-1 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-navy-700 hover:bg-slate-200 transition-colors"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSelectedStatuses([])}
+                  className="px-2 py-1 rounded-md text-[10px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-navy-700 hover:bg-slate-200 transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {/* Statuses list */}
+            {availableStatuses.length === 0 ? (
+              <div className="p-4 text-center text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-navy-950 rounded-xl border border-slate-200 dark:border-navy-800">
+                No statuses discovered in Notion database. All active tasks will be synced.
+              </div>
+            ) : (
+              <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                {availableStatuses.map((statusName) => {
+                  const isSelected = pendingSelectedStatuses.includes(statusName);
+                  const isDoneStatus = isDoneOrArchived({
+                    id: '',
+                    title: '',
+                    status: statusName,
+                    dueDate: null,
+                    priority: '',
+                    url: '',
+                  });
+                  return (
+                    <button
+                      key={statusName}
+                      type="button"
+                      onClick={() => togglePendingStatus(statusName)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border text-xs font-bold transition-all text-left ${
+                        isSelected
+                          ? 'bg-indigo-50/90 dark:bg-indigo-950/50 border-indigo-500 text-slate-950 dark:text-white shadow-xs'
+                          : 'bg-slate-50 dark:bg-navy-950 border-slate-200 dark:border-navy-800 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-navy-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div
+                          className={`w-4 h-4 rounded flex items-center justify-center border transition-colors shrink-0 ${
+                            isSelected
+                              ? 'bg-indigo-600 border-indigo-600 text-white'
+                              : 'border-slate-400 dark:border-navy-600 bg-white dark:bg-navy-900'
+                          }`}
+                        >
+                          {isSelected && <Check size={11} strokeWidth={3} />}
+                        </div>
+                        <span className="truncate">{statusName}</span>
+                      </div>
+                      <span className="text-[10px] font-medium text-slate-500 dark:text-slate-400 shrink-0 ml-2">
+                        {isDoneStatus ? 'Completed / Done' : 'Active Workflow'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-navy-800">
+              <button
+                type="button"
+                onClick={() => setIsStatusModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-navy-800 border border-slate-300 dark:border-navy-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={availableStatuses.length > 0 && pendingSelectedStatuses.length === 0}
+                onClick={() => executeSync(pendingSelectedStatuses, false)}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <RefreshCw size={12} />
+                Sync Selected ({pendingSelectedStatuses.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm">
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-navy-800 bg-white/90 dark:bg-navy-900/90 backdrop-blur-sm shrink-0 shadow-sm space-y-2">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-sm font-bold text-slate-950 dark:text-slate-100 flex items-center gap-1.5">
               <span>📋</span> Task Board
             </h1>
-            <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5">
-              {metrics.active} active tasks · {metrics.done} done ({metrics.total} total)
+            <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300 mt-0.5 font-mono tabular-nums">
+              {metrics.active} active · {metrics.done} done · {metrics.total} total
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => setIsAnalyzerOpen(!isAnalyzerOpen)}
               title={isAnalyzerOpen ? 'Hide Analyzer' : 'Open Smart Analyzer'}
-              className={`p-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1.5 ${
+              className={`p-1.5 rounded-lg border text-xs font-bold transition-all flex items-center gap-1 ${
                 isAnalyzerOpen
                   ? 'bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-navy-800 dark:border-indigo-500 dark:text-indigo-300'
                   : 'bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-navy-700'
               }`}
             >
               <Sparkles size={13} className="text-amber-500" />
-              <span className="hidden sm:inline">Analyzer</span>
               {isAnalyzerOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             </button>
             <button
               onClick={handleCaptureTab}
               disabled={isCapturingTab}
               title="Capture active tab to Notion"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold transition-all bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
             >
               {isCapturingTab ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -547,30 +791,66 @@ Format with clear bold titles. Keep it punchy, executive-level, and under 130 wo
               )}
               <span className="hidden sm:inline">Capture</span>
             </button>
+            {tasks.length > 0 && (
+              <button
+                onClick={handleDeltaSync}
+                disabled={isSyncing || isFetchingStatuses}
+                title="Run incremental Delta Update (only tasks modified in Notion since last sync)"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-slate-100 hover:bg-slate-200 dark:bg-navy-800 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 disabled:opacity-50"
+              >
+                <Zap size={12} className="text-amber-500" />
+                <span>Delta</span>
+              </button>
+            )}
             <button
-              onClick={handleSync}
-              disabled={isSyncing}
+              onClick={handleInitiateSync}
+              disabled={isSyncing || isFetchingStatuses}
+              title="Fetch Notion statuses and choose which tasks to sync"
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                isSyncing
+                isSyncing || isFetchingStatuses
                   ? 'bg-slate-200 dark:bg-navy-800 text-slate-500 dark:text-slate-500 cursor-not-allowed'
                   : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm'
               }`}
             >
-              {isSyncing ? (
+              {isSyncing || isFetchingStatuses ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <RefreshCw size={12} />
               )}
-              {isSyncing ? 'Syncing...' : 'Sync'}
+              {isFetchingStatuses ? 'Statuses...' : isSyncing ? 'Syncing...' : 'Sync'}
             </button>
           </div>
         </div>
+
+        {/* Synced Statuses & Delta Sync Summary Bar */}
+        {(syncedStatuses.length > 0 || syncIntervalMinutes > 0 || lastDeltaStats) && (
+          <div className="pt-1.5 border-t border-slate-200/80 dark:border-navy-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 dark:text-slate-400">
+            <div className="flex items-center gap-1.5 min-w-0 truncate">
+              <Filter size={11} className="text-indigo-500 shrink-0" />
+              <span className="truncate">
+                {syncedStatuses.length > 0
+                  ? `Statuses (${syncedStatuses.length}): ${syncedStatuses.join(', ')}`
+                  : 'All active statuses'}
+              </span>
+              {syncIntervalMinutes > 0 && (
+                <span className="font-mono tabular-nums text-indigo-600 dark:text-indigo-400 shrink-0">
+                  · Auto-delta: {syncIntervalMinutes}m
+                </span>
+              )}
+            </div>
+            {lastDeltaStats && (
+              <span className="font-mono tabular-nums text-[10px] text-slate-500 dark:text-slate-400 shrink-0">
+                {lastDeltaStats.isDelta ? '⚡ Delta' : 'Full'}: +{lastDeltaStats.added} / ~{lastDeltaStats.updated} / -{lastDeltaStats.removed}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Sync Error */}
       {syncError && (
         <div className="mx-3 mt-2 px-3 py-2 bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-700 rounded-lg">
-          <p className="text-xs font-bold text-red-900 dark:text-red-200">⚠️ {syncError}</p>
+          <p className="text-xs font-bold text-red-900 dark:text-red-200 whitespace-pre-line">⚠️ {syncError}</p>
         </div>
       )}
 

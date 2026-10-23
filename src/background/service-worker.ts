@@ -8,7 +8,12 @@
  *  #4 — Edge OAuth: launchWebAuthFlow + PKCE (not getAuthToken)
  */
 
-import { setupDailyAlarms, ALARM_NAMES, type AlarmName } from './alarm-scheduler';
+import {
+  setupDailyAlarms,
+  setupNotionSyncAlarm,
+  ALARM_NAMES,
+  type DailyAlarmName,
+} from './alarm-scheduler';
 import { generateIconDataUrl, updateBadgeForTasks } from './badge-manager';
 import { extractPageContext, extractCapturePayload } from '../content/dom-extractor';
 import {
@@ -16,20 +21,23 @@ import {
   injectNotionTaskStrategy,
   cleanNotionApiKey,
   extractNotionDatabaseId,
-  callNotionApi,
 } from '../core/storage/notion-client';
 import {
   createNotionTask,
   appendNotionTaskContext,
   inspectDatabaseSchema,
 } from '../core/storage/notion-create';
+import {
+  fetchNotionAvailableStatuses,
+  syncNotionTasksWithStatuses,
+} from '../core/storage/notion-sync';
 import type { LLMProviderConfig } from '../types/schema';
 
 // ──────────────────────────────────────────────────────────
 //  Alarm notification metadata (no global mutable state)
 // ──────────────────────────────────────────────────────────
 
-const ALARM_META: Record<AlarmName, { id: string; title: string; message: string }> = {
+const ALARM_META: Record<DailyAlarmName, { id: string; title: string; message: string }> = {
   [ALARM_NAMES.MORNING_TRIAGE]: {
     id: 'triage-alert',
     title: 'Senior PO Morning Triage',
@@ -112,6 +120,14 @@ if (chrome.action?.onClicked) {
 chrome.runtime.onInstalled.addListener(() => {
   setupDailyAlarms();
 
+  // Initialize Notion delta sync alarm if configured
+  chrome.storage.local.get('po_notion_config', (res: Record<string, any>) => {
+    const mins = res?.po_notion_config?.syncIntervalMinutes;
+    if (mins && mins > 0) {
+      setupNotionSyncAlarm(mins);
+    }
+  });
+
   // Register context menu items
   try {
     chrome.contextMenus.removeAll(() => {
@@ -176,7 +192,19 @@ chrome.commands.onCommand.addListener(async (command) => {
 // ──────────────────────────────────────────────────────────
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  const meta = ALARM_META[alarm.name as AlarmName];
+  // Handle background Notion delta sync alarm
+  if (alarm.name === ALARM_NAMES.NOTION_DELTA_SYNC) {
+    (async () => {
+      try {
+        await syncNotionTasksWithStatuses({ isDelta: true });
+      } catch (err) {
+        console.warn('[ServiceWorker] Background Notion delta sync failed:', err);
+      }
+    })();
+    return;
+  }
+
+  const meta = ALARM_META[alarm.name as DailyAlarmName];
   if (!meta) return;
 
   // Generate icon dynamically (no file dependency)
@@ -275,116 +303,41 @@ chrome.runtime.onMessage.addListener(
         return true; // keep channel open for async response
       }
 
-      // ── Fetch tasks from Notion ──
-      case 'FETCH_NOTION_TASKS': {
+      // ── Fetch available statuses from Notion Database ──
+      case 'FETCH_NOTION_STATUSES': {
         (async () => {
           try {
-            let config = message.config;
-            const stored = (await chrome.storage.local.get('po_notion_config')) as {
-              po_notion_config?: { apiKey?: string; databaseId?: string; notionProxyUrl?: string; proxyUrl?: string };
-            };
-            config = {
-              apiKey: config?.apiKey || stored.po_notion_config?.apiKey || '',
-              databaseId: config?.databaseId || stored.po_notion_config?.databaseId || '',
-              notionProxyUrl: config?.notionProxyUrl || config?.proxyUrl || stored.po_notion_config?.notionProxyUrl || stored.po_notion_config?.proxyUrl || '',
-            };
-
-            const cleanKey = cleanNotionApiKey(config?.apiKey || '');
-            const cleanDbId = extractNotionDatabaseId(config?.databaseId || '');
-            const proxyUrl = (config?.notionProxyUrl || '').trim();
-
-            if (!cleanKey) {
-              sendResponse({ ok: false, error: 'Notion API key is missing. Please enter your secret_... token in Settings.' });
-              return;
-            }
-
-            if (!cleanDbId) {
-              sendResponse({ ok: false, error: 'Could not extract a valid Notion Database ID. Please check the URL or ID in Settings.' });
-              return;
-            }
-
-            const json = await callNotionApi(
-              `/databases/${cleanDbId}/query`,
-              'POST',
-              cleanKey,
-              proxyUrl,
-              {
-                page_size: 100,
-              }
-            );
-
-            // Helper: extract a property value regardless of Notion property type
-            const getTitle = (props: any): string => {
-              // Notion guarantees exactly one title property; find it by type
-              for (const key of Object.keys(props || {})) {
-                if (props[key]?.type === 'title') {
-                  return props[key].title?.[0]?.plain_text || 'Untitled';
-                }
-              }
-              return 'Untitled';
-            };
-
-            const getStatus = (props: any): string => {
-              const s = props?.Status || props?.status;
-              if (!s) return 'Unknown';
-              return s.status?.name || s.select?.name || s.multi_select?.[0]?.name || 'Unknown';
-            };
-
-            const getDueDate = (props: any): string | null => {
-              const d = props?.['Due Date'] || props?.['Due'] || props?.['Deadline'] || props?.['due_date'];
-              return d?.date?.start || null;
-            };
-
-            const getPriority = (props: any): string => {
-              const p = props?.Priority || props?.priority;
-              if (!p) return 'None';
-              return p.select?.name || p.status?.name || p.multi_select?.[0]?.name || 'None';
-            };
-
-            // Preserve any existing coach strategies stored locally
-            const storedTasksRes = await chrome.storage.local.get('po_tasks');
-            const prevTaskMap: Record<string, any> = {};
-            if (Array.isArray(storedTasksRes.po_tasks)) {
-              for (const t of storedTasksRes.po_tasks) {
-                if (t?.id) prevTaskMap[t.id] = t;
-              }
-            }
-
-            // Map Notion pages to NotionTask shape
-            const tasks = (json.results || []).map((page: any) => {
-              const prev = prevTaskMap[page.id];
-              return {
-                id: page.id,
-                title: getTitle(page.properties),
-                status: getStatus(page.properties),
-                dueDate: getDueDate(page.properties),
-                priority: getPriority(page.properties),
-                url: page.url || '',
-                archived: Boolean(page.archived),
-                coachStrategy: prev?.coachStrategy,
-                coachStrategyBlockId: prev?.coachStrategyBlockId,
-                coachStrategyUpdatedAt: prev?.coachStrategyUpdatedAt,
-              };
-            });
-
-            // Update badge based on fetched tasks
-            await updateBadgeForTasks(tasks);
-
-            sendResponse({ ok: true, data: tasks });
+            const result = await fetchNotionAvailableStatuses(message.config);
+            sendResponse(result);
           } catch (err: any) {
-            console.warn('[ServiceWorker] Notion fetch failed:', err);
-            let errorMsg = String(err?.message || err);
-            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
-              errorMsg =
-                'Failed to fetch from Notion API. Please verify:\n' +
-                '1. If using corporate network or VPN blocking api.notion.com, configure the Google Apps Script relay URL in Settings.\n' +
-                '2. In edge://extensions or chrome://extensions, click Details on this extension and ensure "Site access" is set to "On all sites".\n' +
-                '3. Ensure your Notion database is shared with your integration (open your Notion Database page -> click "..." -> Connections -> Add your integration).';
-            }
-            sendResponse({ ok: false, error: errorMsg });
+            sendResponse({ ok: false, error: String(err?.message || err) });
           }
         })();
         return true;
+      }
+
+      // ── Fetch or Delta Sync tasks from Notion (filtered by selected statuses) ──
+      case 'FETCH_NOTION_TASKS': {
+        (async () => {
+          try {
+            const result = await syncNotionTasksWithStatuses({
+              config: message.config,
+              selectedStatuses: message.selectedStatuses,
+              isDelta: Boolean(message.isDelta),
+            });
+            sendResponse(result);
+          } catch (err: any) {
+            sendResponse({ ok: false, error: String(err?.message || err) });
+          }
+        })();
+        return true;
+      }
+
+      // ── Configure background Notion Delta Sync alarm interval ──
+      case 'CONFIGURE_NOTION_SYNC_ALARM': {
+        setupNotionSyncAlarm(message.syncIntervalMinutes);
+        sendResponse({ ok: true });
+        return undefined;
       }
 
       // ── Google Drive OAuth (Edge-safe: launchWebAuthFlow) ──

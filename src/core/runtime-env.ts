@@ -6,6 +6,11 @@
  * Ensures the app operates seamlessly in both standalone web preview and extension mode.
  */
 
+import {
+  fetchNotionAvailableStatuses,
+  syncNotionTasksWithStatuses,
+} from './storage/notion-sync';
+
 export function setupChromePolyfill(): void {
   if (typeof window === 'undefined') return;
 
@@ -143,6 +148,28 @@ export function setupChromePolyfill(): void {
           }
         };
 
+        // Built-in polyfill handlers for Notion status & delta sync in web preview
+        if (message?.type === 'FETCH_NOTION_STATUSES') {
+          fetchNotionAvailableStatuses(message.config)
+            .then((res) => sendResponse(res))
+            .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+          return;
+        }
+        if (message?.type === 'FETCH_NOTION_TASKS') {
+          syncNotionTasksWithStatuses({
+            config: message.config,
+            selectedStatuses: message.selectedStatuses,
+            isDelta: Boolean(message.isDelta),
+          })
+            .then((res) => sendResponse(res))
+            .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+          return;
+        }
+        if (message?.type === 'CONFIGURE_NOTION_SYNC_ALARM') {
+          sendResponse({ ok: true });
+          return;
+        }
+
         // Notify in-process listeners
         let willRespondLater = false;
         for (const listener of messageListeners) {
@@ -221,6 +248,7 @@ export function setupChromePolyfill(): void {
   if (!w.chrome.alarms) {
     w.chrome.alarms = {
       create: () => {},
+      clear: () => Promise.resolve(true),
       onAlarm: {
         addListener: () => {},
         removeListener: () => {},

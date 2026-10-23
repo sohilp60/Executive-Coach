@@ -22,8 +22,10 @@ import {
   List,
   X,
   Cpu,
+  Clock,
+  Filter,
 } from 'lucide-react';
-import type { LLMProviderConfig, RouterSettings, ProviderFormat } from '../../types/schema';
+import type { LLMProviderConfig, RouterSettings, ProviderFormat, NotionConfig } from '../../types/schema';
 
 interface ProviderSettingsProps {
   providers: Record<string, LLMProviderConfig>;
@@ -169,6 +171,12 @@ export default function ProviderSettings({
   const [notionApiKey, setNotionApiKey] = useState('');
   const [notionDbId, setNotionDbId] = useState('');
   const [notionProxyUrl, setNotionProxyUrl] = useState('');
+  const [notionSyncInterval, setNotionSyncInterval] = useState<number>(0);
+  const [notionAvailableStatuses, setNotionAvailableStatuses] = useState<string[]>([]);
+  const [notionSelectedStatuses, setNotionSelectedStatuses] = useState<string[]>([]);
+  const [notionLastSyncedAt, setNotionLastSyncedAt] = useState<string | undefined>(undefined);
+  const [isFetchingNotionStatuses, setIsFetchingNotionStatuses] = useState(false);
+  const [isRunningDeltaNow, setIsRunningDeltaNow] = useState(false);
   const [gdriveClientId, setGdriveClientId] = useState('');
   const [testStatus, setTestStatus] = useState<Record<string, 'idle' | 'testing' | 'ok' | 'fail'>>({});
   const [saved, setSaved] = useState(false);
@@ -245,9 +253,22 @@ export default function ProviderSettings({
   useEffect(() => {
     chrome.storage.local.get(['po_notion_config', 'po_gdrive_client_id'], (result: Record<string, any>) => {
       if (result.po_notion_config) {
-        setNotionApiKey(result.po_notion_config.apiKey || '');
-        setNotionDbId(result.po_notion_config.databaseId || '');
-        setNotionProxyUrl(result.po_notion_config.notionProxyUrl || result.po_notion_config.proxyUrl || '');
+        const cfg = result.po_notion_config as NotionConfig;
+        setNotionApiKey(cfg.apiKey || '');
+        setNotionDbId(cfg.databaseId || '');
+        setNotionProxyUrl(cfg.notionProxyUrl || cfg.proxyUrl || '');
+        if (typeof cfg.syncIntervalMinutes === 'number') {
+          setNotionSyncInterval(cfg.syncIntervalMinutes);
+        }
+        if (Array.isArray(cfg.availableStatuses)) {
+          setNotionAvailableStatuses(cfg.availableStatuses);
+        }
+        if (Array.isArray(cfg.selectedStatuses)) {
+          setNotionSelectedStatuses(cfg.selectedStatuses);
+        }
+        if (cfg.lastSyncedAtISO) {
+          setNotionLastSyncedAt(cfg.lastSyncedAtISO);
+        }
       }
       if (result.po_gdrive_client_id) {
         setGdriveClientId(result.po_gdrive_client_id as string);
@@ -537,8 +558,79 @@ export default function ProviderSettings({
     }, 4000);
   };
 
-  const testNotion = async () => {
-    setTestStatus((prev) => ({ ...prev, notion: 'testing' }));
+  const isStatusDone = (statusName: string) => {
+    const s = (statusName || '').toLowerCase().trim();
+    const doneKws = ['done', 'completed', 'complete', 'archived', 'archive', 'closed', 'close', 'finished', 'resolved', 'shipped', 'cancelled', 'canceled'];
+    return doneKws.some((kw) => s === kw || s.startsWith(kw) || s.includes(kw));
+  };
+
+  const fetchStatusesInSettings = async () => {
+    setIsFetchingNotionStatuses(true);
+    setNotionFeedback(null);
+
+    const cleanKey = notionApiKey.trim();
+    const cleanDb = notionDbId.trim();
+    const cleanProxy = notionProxyUrl.trim();
+
+    try {
+      const response = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FETCH_NOTION_STATUSES',
+            config: {
+              apiKey: cleanKey,
+              databaseId: cleanDb,
+              notionProxyUrl: cleanProxy,
+              selectedStatuses: notionSelectedStatuses,
+              syncIntervalMinutes: Number(notionSyncInterval) || 0,
+              lastSyncedAtISO: notionLastSyncedAt,
+            },
+          },
+          (resp) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(resp);
+            }
+          }
+        );
+      });
+
+      if (response?.ok && Array.isArray(response.statuses)) {
+        const discovered: string[] = response.statuses;
+        setNotionAvailableStatuses(discovered);
+
+        const validCurrent = notionSelectedStatuses.filter((s) => discovered.includes(s));
+        const nextSelected =
+          validCurrent.length > 0
+            ? validCurrent
+            : discovered.filter((s) => !isStatusDone(s)).length > 0
+              ? discovered.filter((s) => !isStatusDone(s))
+              : discovered;
+
+        setNotionSelectedStatuses(nextSelected);
+        setNotionFeedback({
+          type: 'success',
+          message: `Discovered ${discovered.length} statuses from Notion. Select the statuses you want to sync below.`,
+        });
+      } else {
+        setNotionFeedback({
+          type: 'error',
+          message: response?.error || 'Could not retrieve statuses from Notion.',
+        });
+      }
+    } catch (err: any) {
+      setNotionFeedback({
+        type: 'error',
+        message: err?.message || 'Failed to fetch statuses from Notion.',
+      });
+    } finally {
+      setIsFetchingNotionStatuses(false);
+    }
+  };
+
+  const runDeltaUpdateInSettings = async () => {
+    setIsRunningDeltaNow(true);
     setNotionFeedback(null);
 
     const cleanKey = notionApiKey.trim();
@@ -554,7 +646,104 @@ export default function ProviderSettings({
               apiKey: cleanKey,
               databaseId: cleanDb,
               notionProxyUrl: cleanProxy,
+              selectedStatuses: notionSelectedStatuses,
+              availableStatuses: notionAvailableStatuses,
+              syncIntervalMinutes: Number(notionSyncInterval) || 0,
+              lastSyncedAtISO: notionLastSyncedAt,
             },
+            selectedStatuses: notionSelectedStatuses,
+            isDelta: true,
+          },
+          (resp) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(resp);
+            }
+          }
+        );
+      });
+
+      if (response?.ok) {
+        const ds = response.deltaStats;
+        if (ds?.syncedAt) setNotionLastSyncedAt(ds.syncedAt);
+        setNotionFeedback({
+          type: 'success',
+          message: ds
+            ? `${ds.isDelta ? 'Delta update' : 'Initial sync'} complete! +${ds.added} added, ${ds.updated} updated, ${ds.removed} removed (${response.data?.length || 0} active synced tasks).`
+            : `Synced ${response.data?.length || 0} tasks successfully.`,
+        });
+      } else {
+        setNotionFeedback({
+          type: 'error',
+          message: response?.error || 'Delta update failed.',
+        });
+      }
+    } catch (err: any) {
+      setNotionFeedback({
+        type: 'error',
+        message: err?.message || 'Failed to execute delta update.',
+      });
+    } finally {
+      setIsRunningDeltaNow(false);
+    }
+  };
+
+  const toggleNotionStatus = (statusName: string) => {
+    setNotionSelectedStatuses((prev) =>
+      prev.includes(statusName) ? prev.filter((s) => s !== statusName) : [...prev, statusName]
+    );
+  };
+
+  const testNotion = async () => {
+    setTestStatus((prev) => ({ ...prev, notion: 'testing' }));
+    setNotionFeedback(null);
+
+    const cleanKey = notionApiKey.trim();
+    const cleanDb = notionDbId.trim();
+    const cleanProxy = notionProxyUrl.trim();
+
+    try {
+      // First fetch available statuses from Notion so the user can choose statuses right away
+      const statusRes = await new Promise<any>((resolve) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FETCH_NOTION_STATUSES',
+            config: {
+              apiKey: cleanKey,
+              databaseId: cleanDb,
+              notionProxyUrl: cleanProxy,
+            },
+          },
+          (resp) => resolve(resp)
+        );
+      });
+
+      let statusesToUse = notionSelectedStatuses;
+      if (statusRes?.ok && Array.isArray(statusRes.statuses)) {
+        const discovered: string[] = statusRes.statuses;
+        setNotionAvailableStatuses(discovered);
+        const validCurrent = notionSelectedStatuses.filter((s) => discovered.includes(s));
+        if (validCurrent.length === 0) {
+          const activeDefaults = discovered.filter((s) => !isStatusDone(s));
+          statusesToUse = activeDefaults.length > 0 ? activeDefaults : discovered;
+          setNotionSelectedStatuses(statusesToUse);
+        }
+      }
+
+      const response = await new Promise<any>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          {
+            type: 'FETCH_NOTION_TASKS',
+            config: {
+              apiKey: cleanKey,
+              databaseId: cleanDb,
+              notionProxyUrl: cleanProxy,
+              selectedStatuses: statusesToUse,
+              syncIntervalMinutes: Number(notionSyncInterval) || 0,
+            },
+            selectedStatuses: statusesToUse,
+            isDelta: false,
           },
           (resp) => {
             if (chrome.runtime.lastError) {
@@ -569,9 +758,12 @@ export default function ProviderSettings({
       if (response?.ok) {
         setTestStatus((prev) => ({ ...prev, notion: 'ok' }));
         const taskCount = response.data?.length || 0;
+        if (response.deltaStats?.syncedAt) {
+          setNotionLastSyncedAt(response.deltaStats.syncedAt);
+        }
         setNotionFeedback({
           type: 'success',
-          message: `Connected successfully! Found ${taskCount} tasks in database.`,
+          message: `Connected successfully! Synced ${taskCount} tasks matching ${statusesToUse.length || 'all'} selected statuses.`,
         });
       } else {
         setTestStatus((prev) => ({ ...prev, notion: 'fail' }));
@@ -602,14 +794,26 @@ export default function ProviderSettings({
     persistProviders(activeProviders);
     persistRouterSettings(localRouter);
 
+    const intervalMins = Math.max(0, Number(notionSyncInterval) || 0);
+
     // Save Notion and GDrive settings
     chrome.storage.local.set({
       po_notion_config: {
         apiKey: notionApiKey.trim(),
         databaseId: notionDbId.trim(),
         notionProxyUrl: notionProxyUrl.trim(),
+        syncIntervalMinutes: intervalMins,
+        selectedStatuses: notionSelectedStatuses,
+        availableStatuses: notionAvailableStatuses,
+        lastSyncedAtISO: notionLastSyncedAt,
       },
       po_gdrive_client_id: gdriveClientId,
+    });
+
+    // Update background alarm for periodic Notion delta sync
+    chrome.runtime.sendMessage({
+      type: 'CONFIGURE_NOTION_SYNC_ALARM',
+      syncIntervalMinutes: intervalMins,
     });
 
     setSaved(true);
@@ -1255,20 +1459,170 @@ export default function ProviderSettings({
               />
             </div>
 
-            <button
-              type="button"
-              onClick={testNotion}
-              disabled={!notionApiKey?.trim() || !notionDbId?.trim() || testStatus.notion === 'testing'}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-navy-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-navy-700 font-bold border border-slate-300 dark:border-navy-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {testStatus.notion === 'testing' ? (
-                <Loader2 size={12} className="animate-spin" />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={testNotion}
+                disabled={!notionApiKey?.trim() || !notionDbId?.trim() || testStatus.notion === 'testing'}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-navy-800 text-slate-900 dark:text-slate-100 hover:bg-slate-300 dark:hover:bg-navy-700 font-bold border border-slate-300 dark:border-navy-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {testStatus.notion === 'testing' ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <TestTube size={12} />
+                )}
+                Test Connection
+                {getStatusIcon('notion')}
+              </button>
+
+              <button
+                type="button"
+                onClick={fetchStatusesInSettings}
+                disabled={!notionApiKey?.trim() || !notionDbId?.trim() || isFetchingNotionStatuses}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 font-bold border border-indigo-200 dark:border-indigo-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isFetchingNotionStatuses ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Filter size={12} />
+                )}
+                Fetch Statuses
+              </button>
+
+              <button
+                type="button"
+                onClick={runDeltaUpdateInSettings}
+                disabled={!notionApiKey?.trim() || !notionDbId?.trim() || isRunningDeltaNow}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 font-bold border border-amber-300 dark:border-amber-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isRunningDeltaNow ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={12} />
+                )}
+                Delta Update Now
+              </button>
+            </div>
+
+            {/* ── Task Statuses to Sync (Anti-Clutter Filter) ── */}
+            <div className="pt-2 border-t border-slate-200 dark:border-navy-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Filter size={12} className="text-indigo-500" />
+                    Statuses to Sync
+                  </p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Only tasks matching your selected statuses will be pulled from Notion.
+                  </p>
+                </div>
+                {notionAvailableStatuses.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const activeOnly = notionAvailableStatuses.filter((s) => !isStatusDone(s));
+                        setNotionSelectedStatuses(activeOnly.length > 0 ? activeOnly : notionAvailableStatuses);
+                      }}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                    >
+                      Active Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotionSelectedStatuses([...notionAvailableStatuses])}
+                      className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-navy-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-navy-700"
+                    >
+                      All
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {notionAvailableStatuses.length === 0 ? (
+                <p className="text-[11px] italic text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-navy-950/60 px-2.5 py-2 rounded-lg border border-slate-200 dark:border-navy-800">
+                  Click &ldquo;Fetch Statuses&rdquo; above (or &ldquo;Sync&rdquo; in the Task Board) to load available statuses from your Notion database.
+                </p>
               ) : (
-                <TestTube size={12} />
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  {notionAvailableStatuses.map((statusName) => {
+                    const isSelected = notionSelectedStatuses.includes(statusName);
+                    return (
+                      <button
+                        key={statusName}
+                        type="button"
+                        onClick={() => toggleNotionStatus(statusName)}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+                          isSelected
+                            ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-navy-950 border-slate-300 dark:border-navy-700 text-slate-700 dark:text-slate-300 hover:border-indigo-400'
+                        }`}
+                      >
+                        {isSelected && <Check size={11} strokeWidth={3} />}
+                        <span>{statusName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               )}
-              Test Connection
-              {getStatusIcon('notion')}
-            </button>
+            </div>
+
+            {/* ── Auto-Sync Interval (Minutes) & Delta Updates ── */}
+            <div className="pt-2 border-t border-slate-200 dark:border-navy-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Clock size={12} className="text-indigo-500" />
+                    Delta Sync Interval (Minutes)
+                  </p>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                    Periodically fetches only tasks modified in Notion since the last sync.
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    min={0}
+                    max={1440}
+                    value={notionSyncInterval}
+                    onChange={(e) => setNotionSyncInterval(Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
+                    className="w-16 bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2 py-1 text-xs text-center font-mono tabular-nums font-bold text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600"
+                    aria-label="Delta sync interval in minutes"
+                  />
+                  <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">min</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { label: 'Off (Manual)', value: 0 },
+                  { label: '5m', value: 5 },
+                  { label: '10m', value: 10 },
+                  { label: '15m', value: 15 },
+                  { label: '30m', value: 30 },
+                  { label: '60m', value: 60 },
+                ].map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() => setNotionSyncInterval(preset.value)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition-colors font-mono tabular-nums ${
+                      notionSyncInterval === preset.value
+                        ? 'bg-indigo-600 border-indigo-600 text-white'
+                        : 'bg-slate-100 dark:bg-navy-950 border-slate-300 dark:border-navy-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-navy-800'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {notionLastSyncedAt && (
+                <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                  Last delta checkpoint: {new Date(notionLastSyncedAt).toLocaleString()}
+                </p>
+              )}
+            </div>
 
             {notionFeedback && (
               <div

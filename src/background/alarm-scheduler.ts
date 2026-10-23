@@ -9,12 +9,14 @@ export const ALARM_NAMES = {
   MORNING_TRIAGE: 'MORNING_TRIAGE',
   MIDDAY_DRIFT_CHECK: 'MIDDAY_DRIFT_CHECK',
   EOD_FOLLOWUP_SWEEP: 'EOD_FOLLOWUP_SWEEP',
+  NOTION_DELTA_SYNC: 'NOTION_DELTA_SYNC',
 } as const;
 
 export type AlarmName = (typeof ALARM_NAMES)[keyof typeof ALARM_NAMES];
+export type DailyAlarmName = Exclude<AlarmName, typeof ALARM_NAMES.NOTION_DELTA_SYNC>;
 
 /** Daily schedule: alarm name → { hour, minute } in local time */
-const DAILY_SCHEDULE: Record<AlarmName, { hour: number; minute: number }> = {
+const DAILY_SCHEDULE: Record<DailyAlarmName, { hour: number; minute: number }> = {
   [ALARM_NAMES.MORNING_TRIAGE]: { hour: 9, minute: 0 },
   [ALARM_NAMES.MIDDAY_DRIFT_CHECK]: { hour: 13, minute: 0 },
   [ALARM_NAMES.EOD_FOLLOWUP_SWEEP]: { hour: 17, minute: 0 },
@@ -55,5 +57,29 @@ export function setupDailyAlarms(): void {
       when: getNextAlarmTime(hour, minute),
       periodInMinutes: 24 * 60, // repeat every 24 hours
     });
+  }
+}
+
+/**
+ * Creates, updates, or clears the recurring Notion delta sync alarm.
+ * Passing 0 or undefined disables automatic background syncing.
+ */
+export function setupNotionSyncAlarm(intervalMinutes?: number): void {
+  try {
+    if (!chrome.alarms) return;
+    const mins = Number(intervalMinutes || 0);
+    if (!mins || mins <= 0) {
+      if (chrome.alarms.clear) {
+        chrome.alarms.clear(ALARM_NAMES.NOTION_DELTA_SYNC);
+      }
+      return;
+    }
+    const validMinutes = Math.max(1, mins);
+    chrome.alarms.create(ALARM_NAMES.NOTION_DELTA_SYNC, {
+      delayInMinutes: validMinutes,
+      periodInMinutes: validMinutes,
+    });
+  } catch (err) {
+    console.warn('[AlarmScheduler] Failed to configure Notion sync alarm:', err);
   }
 }
