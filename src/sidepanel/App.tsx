@@ -282,6 +282,10 @@ export default function App() {
             persistRouterSettings={persistRouterSettings}
             theme={theme}
             setTheme={setTheme}
+            memory={memory}
+            persistMemory={persistMemory}
+            tasks={tasks}
+            persistTasks={persistTasks}
           />
         );
       default:

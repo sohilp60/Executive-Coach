@@ -82,4 +82,56 @@ export interface NotionTask {
   coachStrategyUpdatedAt?: string;
 }
 
+export interface GitHubUpdateConfig {
+  repoSlug: string; // e.g. "Sohil56/Executive-Coach"
+  branch: string;   // e.g. "main"
+  githubToken?: string;
+  autoUpdate: boolean;
+  lastCheckedISO?: string;
+  latestAvailableVersion?: string;
+  latestReleaseUrl?: string;
+  latestDownloadUrl?: string;
+  latestReleaseNotes?: string;
+}
+
+export interface UpdateCheckResult {
+  ok: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  hasUpdate: boolean;
+  source: 'github-release' | 'github-branch' | 'chrome-runtime';
+  releaseTitle?: string;
+  releaseNotes?: string;
+  publishedAt?: string;
+  htmlUrl?: string;
+  downloadUrl?: string;
+  assetName?: string;
+  autoUpdateTriggered?: boolean;
+  error?: string;
+}
+
+export interface ExtensionBackupBundle {
+  schemaVersion: number;
+  app: 'po-executive-coach';
+  exportedAtISO: string;
+  extensionVersion: string;
+  includesCredentials: boolean;
+  data: {
+    memory: POMemoryStore;
+    providers: Record<string, LLMProviderConfig>;
+    routerSettings: RouterSettings;
+    notionConfig: NotionConfig;
+    gdriveClientId?: string;
+    tasks?: NotionTask[];
+    chatHistory?: Array<{
+      id: string;
+      role: 'user' | 'assistant';
+      content: string;
+      timestamp: number;
+    }>;
+    theme?: 'dark' | 'light';
+    githubUpdateConfig?: GitHubUpdateConfig;
+  };
+}
+
 export * from '../content/extractors/types';

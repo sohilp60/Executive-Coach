@@ -10,6 +10,7 @@ import {
   fetchNotionAvailableStatuses,
   syncNotionTasksWithStatuses,
 } from './storage/notion-sync';
+import { checkGitHubForUpdates } from './updater/github-updater';
 
 export function setupChromePolyfill(): void {
   if (typeof window === 'undefined') return;
@@ -167,6 +168,21 @@ export function setupChromePolyfill(): void {
         }
         if (message?.type === 'CONFIGURE_NOTION_SYNC_ALARM') {
           sendResponse({ ok: true });
+          return;
+        }
+        if (message?.type === 'CHECK_GITHUB_UPDATE') {
+          checkGitHubForUpdates(message.config)
+            .then((res) => sendResponse(res))
+            .catch((err) =>
+              sendResponse({
+                ok: false,
+                currentVersion: '0.1.1',
+                latestVersion: '0.1.1',
+                hasUpdate: false,
+                source: 'github-release',
+                error: String(err?.message || err),
+              })
+            );
           return;
         }
 

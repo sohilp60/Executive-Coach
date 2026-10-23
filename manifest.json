@@ -38,7 +38,10 @@
     "https://*.office.com/*",
     "https://*.office365.com/*",
     "https://outlook.live.com/*",
-    "https://*.atlassian.net/*"
+    "https://*.atlassian.net/*",
+    "https://api.github.com/*",
+    "https://github.com/*",
+    "https://raw.githubusercontent.com/*"
   ],
   "content_scripts": [
     {

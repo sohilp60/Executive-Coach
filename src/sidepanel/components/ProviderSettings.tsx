@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Save,
   ArrowUp,
@@ -24,8 +24,34 @@ import {
   Cpu,
   Clock,
   Filter,
+  Download,
+  Upload,
+  FileJson,
+  ExternalLink,
+  RotateCw,
+  Sparkles,
 } from 'lucide-react';
-import type { LLMProviderConfig, RouterSettings, ProviderFormat, NotionConfig } from '../../types/schema';
+import type {
+  LLMProviderConfig,
+  RouterSettings,
+  ProviderFormat,
+  NotionConfig,
+  POMemoryStore,
+  NotionTask,
+  GitHubUpdateConfig,
+  UpdateCheckResult,
+} from '../../types/schema';
+import {
+  DEFAULT_GITHUB_UPDATE_CONFIG,
+  getCurrentExtensionVersion,
+  normalizeRepoSlug,
+  triggerAutomaticUpdateDownload,
+} from '../../core/updater/github-updater';
+import {
+  createExtensionBackupBundle,
+  downloadBackupBundleFile,
+  restoreExtensionBackupFromJson,
+} from '../../core/storage/backup-manager';
 
 interface ProviderSettingsProps {
   providers: Record<string, LLMProviderConfig>;
@@ -34,6 +60,10 @@ interface ProviderSettingsProps {
   persistRouterSettings: (s: RouterSettings) => void;
   theme?: 'dark' | 'light';
   setTheme?: (theme: 'dark' | 'light') => void;
+  memory?: POMemoryStore;
+  persistMemory?: (m: POMemoryStore) => void;
+  tasks?: NotionTask[];
+  persistTasks?: (t: NotionTask[]) => void;
 }
 
 interface ProviderTemplate {
@@ -165,6 +195,8 @@ export default function ProviderSettings({
   persistRouterSettings,
   theme = 'dark',
   setTheme,
+  persistMemory,
+  persistTasks,
 }: ProviderSettingsProps) {
   const [localProviders, setLocalProviders] = useState<Record<string, LLMProviderConfig>>({});
   const [localRouter, setLocalRouter] = useState<RouterSettings>(routerSettings);
@@ -183,6 +215,26 @@ export default function ProviderSettings({
 
   const [providerErrors, setProviderErrors] = useState<Record<string, string>>({});
   const [notionFeedback, setNotionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // GitHub Updater state
+  const [githubConfig, setGithubConfig] = useState<GitHubUpdateConfig>(DEFAULT_GITHUB_UPDATE_CONFIG);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateFeedback, setUpdateFeedback] = useState<{
+    type: 'success' | 'info' | 'warning' | 'error';
+    message: string;
+  } | null>(null);
+
+  // Backup Export / Import state
+  const [includeCredentialsInExport, setIncludeCredentialsInExport] = useState(true);
+  const [includeTasksInExport, setIncludeTasksInExport] = useState(true);
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+  const [isImportingBackup, setIsImportingBackup] = useState(false);
+  const [backupFeedback, setBackupFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Dynamic model sync & custom providers state
   const [syncingModels, setSyncingModels] = useState<Record<string, boolean>>({});
@@ -249,31 +301,40 @@ export default function ProviderSettings({
     setLocalRouter(routerSettings);
   }, [providers, routerSettings]);
 
-  // Load Notion and GDrive settings from storage
+  // Load Notion, GDrive, and GitHub update settings from storage
   useEffect(() => {
-    chrome.storage.local.get(['po_notion_config', 'po_gdrive_client_id'], (result: Record<string, any>) => {
-      if (result.po_notion_config) {
-        const cfg = result.po_notion_config as NotionConfig;
-        setNotionApiKey(cfg.apiKey || '');
-        setNotionDbId(cfg.databaseId || '');
-        setNotionProxyUrl(cfg.notionProxyUrl || cfg.proxyUrl || '');
-        if (typeof cfg.syncIntervalMinutes === 'number') {
-          setNotionSyncInterval(cfg.syncIntervalMinutes);
+    chrome.storage.local.get(
+      ['po_notion_config', 'po_gdrive_client_id', 'po_github_update_config'],
+      (result: Record<string, any>) => {
+        if (result.po_notion_config) {
+          const cfg = result.po_notion_config as NotionConfig;
+          setNotionApiKey(cfg.apiKey || '');
+          setNotionDbId(cfg.databaseId || '');
+          setNotionProxyUrl(cfg.notionProxyUrl || cfg.proxyUrl || '');
+          if (typeof cfg.syncIntervalMinutes === 'number') {
+            setNotionSyncInterval(cfg.syncIntervalMinutes);
+          }
+          if (Array.isArray(cfg.availableStatuses)) {
+            setNotionAvailableStatuses(cfg.availableStatuses);
+          }
+          if (Array.isArray(cfg.selectedStatuses)) {
+            setNotionSelectedStatuses(cfg.selectedStatuses);
+          }
+          if (cfg.lastSyncedAtISO) {
+            setNotionLastSyncedAt(cfg.lastSyncedAtISO);
+          }
         }
-        if (Array.isArray(cfg.availableStatuses)) {
-          setNotionAvailableStatuses(cfg.availableStatuses);
+        if (result.po_gdrive_client_id) {
+          setGdriveClientId(result.po_gdrive_client_id as string);
         }
-        if (Array.isArray(cfg.selectedStatuses)) {
-          setNotionSelectedStatuses(cfg.selectedStatuses);
-        }
-        if (cfg.lastSyncedAtISO) {
-          setNotionLastSyncedAt(cfg.lastSyncedAtISO);
+        if (result.po_github_update_config) {
+          setGithubConfig({
+            ...DEFAULT_GITHUB_UPDATE_CONFIG,
+            ...(result.po_github_update_config as GitHubUpdateConfig),
+          });
         }
       }
-      if (result.po_gdrive_client_id) {
-        setGdriveClientId(result.po_gdrive_client_id as string);
-      }
-    });
+    );
   }, []);
 
   const updateProvider = (id: string, field: keyof LLMProviderConfig, value: any) => {
@@ -795,8 +856,14 @@ export default function ProviderSettings({
     persistRouterSettings(localRouter);
 
     const intervalMins = Math.max(0, Number(notionSyncInterval) || 0);
+    const normalizedGithub: GitHubUpdateConfig = {
+      ...githubConfig,
+      repoSlug: normalizeRepoSlug(githubConfig.repoSlug),
+      branch: (githubConfig.branch || 'main').trim() || 'main',
+    };
+    setGithubConfig(normalizedGithub);
 
-    // Save Notion and GDrive settings
+    // Save Notion, GDrive, and GitHub update settings
     chrome.storage.local.set({
       po_notion_config: {
         apiKey: notionApiKey.trim(),
@@ -808,6 +875,7 @@ export default function ProviderSettings({
         lastSyncedAtISO: notionLastSyncedAt,
       },
       po_gdrive_client_id: gdriveClientId,
+      po_github_update_config: normalizedGithub,
     });
 
     // Update background alarm for periodic Notion delta sync
@@ -818,6 +886,188 @@ export default function ProviderSettings({
 
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  // ── Check GitHub for Updates & Auto-Update ───────────────────────
+  const handleCheckForUpdates = async () => {
+    setIsCheckingUpdate(true);
+    setUpdateFeedback(null);
+
+    const normalizedCfg: GitHubUpdateConfig = {
+      ...githubConfig,
+      repoSlug: normalizeRepoSlug(githubConfig.repoSlug),
+      branch: (githubConfig.branch || 'main').trim() || 'main',
+    };
+    setGithubConfig(normalizedCfg);
+    await chrome.storage.local.set({ po_github_update_config: normalizedCfg });
+
+    try {
+      const res = await new Promise<UpdateCheckResult>((resolve, reject) => {
+        chrome.runtime.sendMessage(
+          { type: 'CHECK_GITHUB_UPDATE', config: normalizedCfg },
+          (response: UpdateCheckResult) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
+
+      setUpdateResult(res);
+      setGithubConfig((prev) => ({
+        ...prev,
+        lastCheckedISO: new Date().toISOString(),
+        latestAvailableVersion: res.latestVersion,
+        latestReleaseUrl: res.htmlUrl,
+        latestDownloadUrl: res.downloadUrl,
+        latestReleaseNotes: res.releaseNotes,
+      }));
+
+      if (!res.ok) {
+        setUpdateFeedback({
+          type: 'error',
+          message: res.error || 'Failed to check GitHub for updates.',
+        });
+        return;
+      }
+
+      if (res.hasUpdate) {
+        if (normalizedCfg.autoUpdate) {
+          const autoAction = triggerAutomaticUpdateDownload(res);
+          setUpdateFeedback({
+            type: 'warning',
+            message: autoAction.message,
+          });
+        } else {
+          setUpdateFeedback({
+            type: 'warning',
+            message: `Update available! Version v${res.latestVersion} is newer than your installed v${res.currentVersion}.`,
+          });
+        }
+      } else {
+        setUpdateFeedback({
+          type: 'success',
+          message: `You are up to date! Installed version v${res.currentVersion} matches the latest on GitHub (${normalizedCfg.repoSlug}).`,
+        });
+      }
+    } catch (err: any) {
+      setUpdateFeedback({
+        type: 'error',
+        message: err?.message || 'Error communicating with background update service.',
+      });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  // ── Export All Configurations & Memory ───────────────────────────
+  const handleExportBackup = async () => {
+    setIsExportingBackup(true);
+    setBackupFeedback(null);
+
+    try {
+      // First ensure current unsaved form changes are flushed so the export has the latest state
+      handleSave();
+
+      const bundle = await createExtensionBackupBundle({
+        includeCredentials: includeCredentialsInExport,
+        includeTasksAndChat: includeTasksInExport,
+      });
+
+      const fileName = downloadBackupBundleFile(bundle);
+      const provCount = Object.keys(bundle.data.providers || {}).length;
+      const peopleCount = bundle.data.memory?.teamAndStakeholders?.length || 0;
+      const rulesCount = bundle.data.memory?.productRulesAndContext?.length || 0;
+
+      setBackupFeedback({
+        type: 'success',
+        message: `Exported "${fileName}" (${provCount} providers, ${peopleCount} stakeholders, ${rulesCount} product rules${
+          includeTasksInExport ? `, ${bundle.data.tasks?.length || 0} tasks` : ''
+        }).`,
+      });
+    } catch (err: any) {
+      setBackupFeedback({
+        type: 'error',
+        message: `Export failed: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
+  // ── Import Backup File (.json) ───────────────────────────────────
+  const handleImportBackupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImportingBackup(true);
+    setBackupFeedback(null);
+
+    try {
+      const rawText = await file.text();
+      const result = await restoreExtensionBackupFromJson(rawText);
+
+      if (!result.ok || !result.bundle) {
+        setBackupFeedback({
+          type: 'error',
+          message: result.error || 'Failed to restore backup file.',
+        });
+        return;
+      }
+
+      const d = result.bundle.data;
+
+      // Immediately update parent App states and local form states
+      if (d.providers) {
+        persistProviders(d.providers);
+      }
+      if (d.routerSettings) {
+        persistRouterSettings(d.routerSettings);
+        setLocalRouter(d.routerSettings);
+      }
+      if (d.memory && persistMemory) {
+        persistMemory(d.memory);
+      }
+      if (Array.isArray(d.tasks) && persistTasks) {
+        persistTasks(d.tasks);
+      }
+      if (d.theme && setTheme) {
+        setTheme(d.theme);
+      }
+      if (d.notionConfig) {
+        setNotionApiKey(d.notionConfig.apiKey || '');
+        setNotionDbId(d.notionConfig.databaseId || '');
+        setNotionProxyUrl(d.notionConfig.notionProxyUrl || d.notionConfig.proxyUrl || '');
+        setNotionSyncInterval(Number(d.notionConfig.syncIntervalMinutes || 0));
+        setNotionAvailableStatuses(d.notionConfig.availableStatuses || []);
+        setNotionSelectedStatuses(d.notionConfig.selectedStatuses || []);
+        setNotionLastSyncedAt(d.notionConfig.lastSyncedAtISO);
+      }
+      if (d.gdriveClientId !== undefined) {
+        setGdriveClientId(d.gdriveClientId);
+      }
+      if (d.githubUpdateConfig) {
+        setGithubConfig(d.githubUpdateConfig);
+      }
+
+      const s = result.summary;
+      setBackupFeedback({
+        type: 'success',
+        message: `Imported "${file.name}"! Restored ${s.providersCount} LLM providers, ${s.stakeholdersCount} stakeholders, ${s.rulesCount} product rules, ${s.tasksCount} tasks, and ${s.chatMessagesCount} chat messages.`,
+      });
+    } catch (err: any) {
+      setBackupFeedback({
+        type: 'error',
+        message: `Import error: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsImportingBackup(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   const getStatusIcon = (id: string) => {
@@ -1101,25 +1351,70 @@ export default function ProviderSettings({
     <div className="flex flex-col h-full bg-slate-50 dark:bg-navy-950 text-slate-900 dark:text-slate-100">
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-300 dark:border-navy-800 bg-white dark:bg-navy-900/60 shrink-0">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-sm font-bold text-slate-900 dark:text-indigo-200 tracking-wide">⚙️ Settings</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-bold text-slate-900 dark:text-indigo-200 tracking-wide">⚙️ Settings</h1>
+              <span className="text-[10px] font-mono tabular-nums font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-navy-800 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-navy-700">
+                v{getCurrentExtensionVersion()}
+              </span>
+            </div>
             <p className="text-[11px] text-slate-700 dark:text-slate-300 font-medium mt-0.5">
-              LLM providers, model sync, integrations, privacy
+              LLM providers, Notion sync, backup &amp; GitHub auto-update
             </p>
           </div>
-          <button
-            onClick={handleSave}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
-              saved
-                ? 'bg-emerald-700 text-white'
-                : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleCheckForUpdates}
+              disabled={isCheckingUpdate}
+              title="Check GitHub for new release and auto-update"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-navy-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/80 text-slate-800 dark:text-slate-200 hover:text-indigo-700 dark:hover:text-indigo-300 border border-slate-300 dark:border-navy-700 transition-all shadow-xs disabled:opacity-50"
+            >
+              {isCheckingUpdate ? (
+                <Loader2 size={13} className="animate-spin text-indigo-500" />
+              ) : (
+                <RefreshCw size={13} className="text-indigo-500" />
+              )}
+              <span>Update</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
+                saved
+                  ? 'bg-emerald-700 text-white'
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+              }`}
+            >
+              {saved ? <Check size={14} /> : <Save size={14} />}
+              {saved ? 'Saved!' : 'Save All'}
+            </button>
+          </div>
+        </div>
+
+        {/* Quick top update banner if triggered from header */}
+        {updateFeedback && (
+          <div
+            className={`mt-2.5 text-xs font-semibold px-3 py-2 rounded-lg border flex items-start justify-between gap-2 ${
+              updateFeedback.type === 'success'
+                ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                : updateFeedback.type === 'warning'
+                ? 'bg-amber-100 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-950 dark:text-amber-200'
+                : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
             }`}
           >
-            {saved ? <Check size={14} /> : <Save size={14} />}
-            {saved ? 'Saved!' : 'Save All'}
-          </button>
-        </div>
+            <span className="leading-snug">{updateFeedback.message}</span>
+            <button
+              type="button"
+              onClick={() => setUpdateFeedback(null)}
+              className="text-current opacity-70 hover:opacity-100 shrink-0"
+              aria-label="Dismiss update status"
+            >
+              <X size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
@@ -1682,6 +1977,262 @@ export default function ProviderSettings({
             <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
               Uses PKCE OAuth flow via <code className="bg-slate-200 dark:bg-navy-800 px-1 rounded text-slate-900 dark:text-white font-mono">chrome.identity.launchWebAuthFlow</code> — compatible with Chrome and Edge.
             </p>
+          </div>
+        </section>
+
+        {/* ── Backup & Restore (Export / Import All Settings & Memory) ── */}
+        <section>
+          <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold mb-2 flex items-center gap-1.5">
+            <FileJson size={14} className="text-indigo-500" />
+            Backup &amp; Restore (Export / Import)
+          </h2>
+          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-3 shadow-sm">
+            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-medium">
+              Export all your LLM provider configurations, API keys, Notion settings, status filters, and PO Memory Vault into a single <code className="font-mono bg-slate-200 dark:bg-navy-800 px-1 rounded">.json</code> file. Import it anytime on a fresh install to restore everything in one click.
+            </p>
+
+            {/* Export Options */}
+            <div className="space-y-1.5 pt-1">
+              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeCredentialsInExport}
+                  onChange={(e) => setIncludeCredentialsInExport(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Include API Keys &amp; Tokens (recommended for personal fresh-install backups)</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={includeTasksInExport}
+                  onChange={(e) => setIncludeTasksInExport(e.target.checked)}
+                  className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span>Include Synced Notion Tasks &amp; Coach Chat History</span>
+              </label>
+            </div>
+
+            {/* Export & Import Buttons */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                disabled={isExportingBackup}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
+              >
+                {isExportingBackup ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Download size={13} />
+                )}
+                Export Full Backup (.json)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImportingBackup}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-navy-700 transition-colors disabled:opacity-50"
+              >
+                {isImportingBackup ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Upload size={13} />
+                )}
+                Import Backup File (.json)
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                onChange={handleImportBackupFile}
+                className="hidden"
+              />
+            </div>
+
+            {backupFeedback && (
+              <div
+                className={`text-xs font-semibold px-3 py-2.5 rounded-lg border flex items-start gap-2 break-words ${
+                  backupFeedback.type === 'success'
+                    ? 'bg-emerald-100 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+                    : 'bg-red-100 dark:bg-red-950/70 border-red-300 dark:border-red-800 text-red-900 dark:text-red-200'
+                }`}
+              >
+                {backupFeedback.type === 'success' ? (
+                  <Check size={15} className="shrink-0 mt-0.5 text-emerald-700 dark:text-emerald-300" />
+                ) : (
+                  <AlertCircle size={15} className="shrink-0 mt-0.5 text-red-700 dark:text-red-300" />
+                )}
+                <span className="leading-snug">{backupFeedback.message}</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* ── GitHub Extension Updates & Auto-Updater ─────────────── */}
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-xs uppercase tracking-wider text-slate-900 dark:text-slate-200 font-bold flex items-center gap-1.5">
+              <Sparkles size={14} className="text-indigo-500" />
+              Extension Updates (GitHub Release Auto-Updater)
+            </h2>
+            <span className="text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+              Installed: v{getCurrentExtensionVersion()}
+            </span>
+          </div>
+
+          <div className="bg-white dark:bg-navy-900 border border-slate-300 dark:border-navy-700 rounded-xl p-3 space-y-2.5 shadow-sm">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2 relative">
+                <Globe
+                  size={12}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+                />
+                <input
+                  value={githubConfig.repoSlug}
+                  onChange={(e) =>
+                    setGithubConfig((prev) => ({ ...prev, repoSlug: e.target.value }))
+                  }
+                  placeholder="owner/repo (e.g. Sohil56/Executive-Coach)"
+                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono"
+                />
+              </div>
+              <div>
+                <input
+                  value={githubConfig.branch}
+                  onChange={(e) =>
+                    setGithubConfig((prev) => ({ ...prev, branch: e.target.value }))
+                  }
+                  placeholder="Branch (main)"
+                  className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 font-mono text-center"
+                  title="Default branch to inspect if no GitHub Release is published"
+                />
+              </div>
+            </div>
+
+            <div className="relative">
+              <Key
+                size={12}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400"
+              />
+              <input
+                type="password"
+                value={githubConfig.githubToken || ''}
+                onChange={(e) =>
+                  setGithubConfig((prev) => ({ ...prev, githubToken: e.target.value }))
+                }
+                placeholder="GitHub Personal Access Token (optional — only needed for private repos)"
+                className="w-full bg-slate-50 dark:bg-navy-950 border border-slate-300 dark:border-navy-700 rounded-lg pl-8 pr-2.5 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-indigo-600 dark:focus:border-indigo-500 placeholder-slate-500 dark:placeholder-slate-400 font-medium"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-slate-800 dark:text-slate-200 font-semibold cursor-pointer pt-0.5">
+              <input
+                type="checkbox"
+                checked={githubConfig.autoUpdate}
+                onChange={(e) =>
+                  setGithubConfig((prev) => ({ ...prev, autoUpdate: e.target.checked }))
+                }
+                className="rounded border-slate-300 dark:border-navy-700 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>Automatically download &amp; trigger update when a newer release is found</span>
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCheckForUpdates}
+                disabled={isCheckingUpdate}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors shadow-xs disabled:opacity-50"
+              >
+                {isCheckingUpdate ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <RefreshCw size={13} />
+                )}
+                Check GitHub for Updates
+              </button>
+
+              {updateResult?.hasUpdate && updateResult.downloadUrl && (
+                <button
+                  type="button"
+                  onClick={() => triggerAutomaticUpdateDownload(updateResult)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors shadow-xs"
+                >
+                  <Download size={13} />
+                  Download v{updateResult.latestVersion}
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    if (typeof chrome !== 'undefined' && chrome.runtime?.reload) {
+                      chrome.runtime.reload();
+                    } else {
+                      window.location.reload();
+                    }
+                  } catch {
+                    window.location.reload();
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-slate-200 dark:bg-navy-800 hover:bg-slate-300 dark:hover:bg-navy-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-navy-700 transition-colors"
+                title="Reload extension runtime to apply extracted updates"
+              >
+                <RotateCw size={12} />
+                Reload Extension
+              </button>
+            </div>
+
+            {updateResult && updateResult.ok && (
+              <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-navy-950 border border-slate-300 dark:border-navy-800 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {updateResult.releaseTitle || `Latest: v${updateResult.latestVersion}`}
+                  </span>
+                  <span
+                    className={`text-[10px] font-mono tabular-nums font-bold px-2 py-0.5 rounded ${
+                      updateResult.hasUpdate
+                        ? 'bg-amber-200 dark:bg-amber-900/70 text-amber-950 dark:text-amber-200'
+                        : 'bg-emerald-200 dark:bg-emerald-900/70 text-emerald-950 dark:text-emerald-200'
+                    }`}
+                  >
+                    {updateResult.hasUpdate
+                      ? `Update Available: v${updateResult.latestVersion}`
+                      : `Up to Date (v${updateResult.currentVersion})`}
+                  </span>
+                </div>
+                {updateResult.releaseNotes && (
+                  <p className="text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap line-clamp-4">
+                    {updateResult.releaseNotes}
+                  </p>
+                )}
+                {updateResult.htmlUrl && (
+                  <a
+                    href={updateResult.htmlUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline pt-0.5"
+                  >
+                    <span>View Release on GitHub</span>
+                    <ExternalLink size={11} />
+                  </a>
+                )}
+              </div>
+            )}
+
+            {githubConfig.lastCheckedISO && (
+              <p className="text-[10px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                Last checked: {new Date(githubConfig.lastCheckedISO).toLocaleString()}
+                {githubConfig.latestAvailableVersion
+                  ? ` • Latest remote version: v${githubConfig.latestAvailableVersion}`
+                  : ''}
+              </p>
+            )}
           </div>
         </section>
 

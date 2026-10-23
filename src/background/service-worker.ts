@@ -31,6 +31,7 @@ import {
   fetchNotionAvailableStatuses,
   syncNotionTasksWithStatuses,
 } from '../core/storage/notion-sync';
+import { checkGitHubForUpdates } from '../core/updater/github-updater';
 import type { LLMProviderConfig } from '../types/schema';
 
 // ──────────────────────────────────────────────────────────
@@ -900,11 +901,26 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
+      case 'CHECK_GITHUB_UPDATE': {
+        (async () => {
+          try {
+            const result = await checkGitHubForUpdates(message.config);
+            sendResponse(result);
+          } catch (err: any) {
+            sendResponse({
+              ok: false,
+              currentVersion: '0.1.1',
+              latestVersion: '0.1.1',
+              hasUpdate: false,
+              source: 'github-release',
+              error: String(err?.message || err),
+            });
+          }
+        })();
+        return true;
+      }
+
       default:
-
-
-
-
         // Unknown message type — don't hold the channel open
         return undefined;
     }
